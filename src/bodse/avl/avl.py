@@ -7,10 +7,13 @@ import datetime as dt
 import logging
 import pathlib
 import time
+from typing import Iterator
 from urllib import parse
 
 # Third party imports
-from caf.toolkit import log_helpers
+from caf.toolkit import log_helpers, config_base
+from pydantic import dataclasses, types
+import pydantic
 
 # Local imports
 from bodse import request
@@ -20,9 +23,43 @@ from bodse.avl import gtfs, raw, database
 
 ##### CONSTANTS #####
 LOG = logging.getLogger(__name__)
+CONFIG_PATH = pathlib.Path("avl_downloader.yml")
 
 
 ##### CLASSES #####
+@dataclasses.dataclass
+class DownloadTime:
+    minutes: types.conint(ge=0) = 0
+    hours: types.conint(ge=0) = 0
+    days: types.conint(ge=0) = 0
+    wait_minutes: types.conint(ge=1) = 1
+
+    _MINIMUM_DOWNLOAD_MINUTES = 10
+
+    @pydantic.root_validator
+    def _check_time(cls, values: dict) -> dict:
+        # pylint: disable=no-self-argument
+        if values["minutes"] + values["hours"] + values["days"] <= 0:
+            raise ValueError(
+                "at least one of minutes, hours or days must be a positive integer"
+            )
+
+        if (
+            values["hours"] + values["days"] <= 0
+            and values["minutes"] < cls._MINIMUM_DOWNLOAD_MINUTES
+        ):
+            raise ValueError(
+                f"total time should be greater than {cls._MINIMUM_DOWNLOAD_MINUTES} "
+                f"minutes, not {values['minutes']}"
+            )
+
+        return values
+
+
+class DownloaderConfig(config_base.BaseConfig):
+    output_folder: types.DirectoryPath
+    api_auth_config: types.FilePath
+    download_time: DownloadTime
 
 
 ##### FUNCTIONS #####
@@ -55,37 +92,35 @@ def store_raw(avl_database: database.RawAVLDatabase, auth: request.APIAuth):
         connection.commit()
 
 
-def main():
-    output_folder = pathlib.Path("Outputs")
-    output_folder = output_folder / f"BODSE AVL Outputs - {dt.date.today():%Y-%m-%d}"
+def download_iterator(timings: DownloadTime) -> Iterator[int]:
+    end = dt.datetime.now() + dt.timedelta(
+        days=timings.days, hours=timings.hours, minutes=timings.minutes
+    )
+    LOG.info(
+        "Starting continuous downloads every %s minutes, which will finish at %s",
+        timings.wait_minutes,
+        f"{end:%c}",
+    )
+
+    count = 0
+    while dt.datetime.now() < end:
+        count += 1
+        yield count
+        time.sleep(timings.wait_minutes * 60)
+
+
+def main(params: DownloaderConfig):
+    tool_details = log_helpers.ToolDetails(bodse.__package__, bodse.__version__)
+
+    output_folder = params.output_folder / f"BODSE AVL Outputs - {dt.date.today():%Y-%m-%d}"
     output_folder.mkdir(exist_ok=True, parents=True)
+    log_file = output_folder / "AVL_downloader.log"
 
-    with log_helpers.LogHelper(
-        bodse.__package__,
-        log_helpers.ToolDetails(bodse.__package__, bodse.__version__),
-        log_file=output_folder / "avl.log",
-    ):
-        bods_auth = request.APIAuth.load_yaml(pathlib.Path("bods_auth.yml"))
+    with log_helpers.LogHelper(bodse.__package__, tool_details, log_file=log_file):
+        LOG.debug("AVL downloader parameters:\n%s", params.to_yaml())
+        LOG.info("Outputs saved to: %s", output_folder)
 
-        gtfs_feed_path = output_folder / "gtfs-rt_request.txt"
-        gtfs.write_feed(gtfs_feed_path, bods_auth)
+        bods_auth = request.APIAuth.load_yaml(params.api_auth_config)
+        LOG.info("Accessing BODS using user account: %s", bods_auth.name)
 
-        database_path = output_folder / f"avl_data-{dt.date.today():%Y%m%d}.sqlite"
-        raw_database = database.RawAVLDatabase(database_path)
-        LOG.info("Created: %s", database_path)
-
-        wait_seconds = 60
-        count = 0
-        max_count = 50
-        while True:
-            LOG.info(
-                "Downloading %s/%s (%s)", count, max_count, f"{count / max_count:.0%}"
-            )
-            store_raw(raw_database, bods_auth)
-            count += 1
-
-            if count >= max_count:
-                break
-
-            LOG.info("Waiting %s seconds...", wait_seconds)
-            time.sleep(wait_seconds)
+        feed = gtfs.download(bods_auth)

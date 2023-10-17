@@ -12,7 +12,9 @@ LOG = logging.getLogger(__package__)
 
 ##### FUNCTIONS #####
 def main() -> None:
-    avl.main()
+    # TODO Add command line arguments for config path
+    params = avl.DownloaderConfig.load_yaml(avl.CONFIG_PATH)
+    avl.main(params)
 
 
 if __name__ == "__main__":
