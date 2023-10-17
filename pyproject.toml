@@ -1,0 +1,37 @@
+# Linters
+[tool.black]
+line-length = 95
+target-version = ['py39']
+
+[tool.pylint.messages_control]
+disable = [
+    "line-too-long",    # Compatibility with black
+    "too-many-lines",
+    "use-dict-literal",
+    "use-list-literal",
+]
+
+# Pylint settings
+[tool.pylint.basic]
+good-names = ["df", "fn", "ca", "tp", "to", "x", "x1", "x2", "i", "f", "q"]
+extension-pkg-allow-list = ["pydantic"]
+
+[tool.pylint.main]
+ignore = ["__init__.py", "_version.py", "versioneer.py"]
+
+[tool.pylint.design]
+max-args = 10
+max-attributes = 15
+max-statements = 100
+
+[tool.mypy]
+packages = ["caf.toolkit"]
+ignore_missing_imports = true
+allow_redefinition = true
+
+[tool.pydocstyle]
+convention = "numpy"
+match = '(?!_test)(?!test_)(?!__init__).*\.py'
+add-ignore = [
+    "D202",    # Temporary compatibility with black
+]
