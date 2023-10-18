@@ -14,6 +14,7 @@ from urllib import parse
 from caf.toolkit import log_helpers, config_base
 from pydantic import dataclasses, types
 import pydantic
+import requests
 
 # Local imports
 from bodse import request
@@ -92,7 +93,46 @@ def store_raw(avl_database: database.RawAVLDatabase, auth: request.APIAuth):
         connection.commit()
 
 
-def download_iterator(timings: DownloadTime) -> Iterator[int]:
+def _readable_timedelta(delta: dt.timedelta) -> str:
+    """Convert to readable string with varying resolution.
+    
+    String contains only the largest 2 units from days, hours,
+    minutes and seconds e.g. "3 days, 2 hrs", "10 hrs, 16 mins"
+    or "37 mins, 42 secs".
+    """
+    readable = []
+    if delta.days > 0:
+        readable.append(f"{delta.days:,} days")
+
+    if delta.seconds > 0:
+        minutes, seconds = divmod(delta.seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+
+        if hours > 0:
+            readable.append(f"{hours} hrs")
+
+        if minutes > 0 and delta.days == 0:
+            readable.append(f"{minutes} mins")
+
+        if seconds > 0 and hours == 0:
+            readable.append(f"{seconds} secs")
+
+    return ", ".join(readable)
+
+
+def _download_iterator(timings: DownloadTime) -> Iterator[int]:
+    """Yield every `wait_time` seconds until end time.
+
+    Parameters
+    ----------
+    timings : DownloadTime
+        Parameters for determining download schedule.
+
+    Yields
+    ------
+    int
+        Iterator count.
+    """
     end = dt.datetime.now() + dt.timedelta(
         days=timings.days, hours=timings.hours, minutes=timings.minutes
     )
@@ -106,6 +146,13 @@ def download_iterator(timings: DownloadTime) -> Iterator[int]:
     while dt.datetime.now() < end:
         count += 1
         yield count
+
+        LOG.info(
+            "%s complete, waiting %s minute(s). Total time remaining %s",
+            count,
+            timings.wait_minutes,
+            _readable_timedelta(end - dt.datetime.now()),
+        )
         time.sleep(timings.wait_minutes * 60)
 
 
@@ -123,4 +170,11 @@ def main(params: DownloaderConfig):
         bods_auth = request.APIAuth.load_yaml(params.api_auth_config)
         LOG.info("Accessing BODS using user account: %s", bods_auth.name)
 
-        feed = gtfs.download(bods_auth)
+        for _ in _download_iterator(params.download_time):
+            try:
+                feed = gtfs.download(bods_auth)
+                # TODO Store data in a local SQLite database
+            except requests.HTTPError as exc:
+                LOG.error("HTTP error when downloading AVL feed: %s", exc)
+
+        LOG.info("Finished downloading AVL data")
