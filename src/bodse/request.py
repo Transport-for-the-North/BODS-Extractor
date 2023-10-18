@@ -9,6 +9,7 @@ from typing import Optional
 # Third party imports
 import caf.toolkit
 import requests
+from pydantic import dataclasses
 from tqdm import tqdm
 
 # Local imports
@@ -26,6 +27,27 @@ class APIAuth(caf.toolkit.BaseConfig):
 
     name: str
     password: str
+
+
+@dataclasses.dataclass
+class BoundingBox:
+    """Bounding box parameter for BODS API requests."""
+
+    min_latitude: float
+    max_latitude: float
+    min_longitude: float
+    max_longitude: float
+
+    def as_str(self) -> str:
+        """Convert to str in the format for BODS API requests.
+
+        Format: "min_latitude,max_latitude,min_longitude,max_latitude".
+        Each number is formatted to 5 decimal places.
+        """
+        return (
+            f"{self.min_latitude:.5f},{self.max_latitude:.5f},"
+            f"{self.min_longitude:.5f},{self.max_latitude:.5f}"
+        )
 
 
 ##### FUNCTIONS #####
@@ -75,6 +97,10 @@ def get(
         Content returned from get request.
     str | None
         Encoding of content, if given by response.
+
+    Raises
+    ------
+    HTTPError
     """
     if auth is None:
         auth = None
@@ -82,6 +108,17 @@ def get(
         auth = (auth.name, auth.password)
 
     response = requests.get(url, stream=True, auth=auth, timeout=timeout, **kwargs)
+
+    message = (
+        f"""Get request sent to "{response.url}", response """
+        f"status {response.status_code} - {response.reason}"
+    )
+    if response.ok:
+        LOG.debug(message)
+    else:
+        LOG.warning(message)
+
+    response.raise_for_status()
 
     if pbar:
         content = _pbar_download(response)
