@@ -3,6 +3,7 @@
 
 ##### IMPORTS #####
 # Standard imports
+import abc
 import logging
 import pathlib
 import re
@@ -27,11 +28,8 @@ SQLALCHEMY_TYPE_LOOKUP = {
 
 
 ##### CLASSES #####
-class RawAVLDatabase:
-    """Manages interactions with an SQlite database to store raw AVL data."""
-
-    _metadata_table_name = "avl_metadata"
-    _vehicle_activity_table_name = "vehicle_activity"
+class _Database(abc.ABC):
+    """Base class for managing AVL local SQLite database with sqlalchemy."""
 
     def __init__(self, path: pathlib.Path, overwrite: bool = False) -> None:
         """Initialise database.
@@ -44,15 +42,58 @@ class RawAVLDatabase:
             Whether to delete `path` if it already exists and
             re-create it or just append to existing database.
         """
+        self._path = pathlib.Path(path)
         self._engine = sqlalchemy.create_engine(f"sqlite:///{path}")
         self._metadata = sqlalchemy.MetaData()
 
+        self._init_tables()
+        self._create(overwrite)
+
+    @abc.abstractmethod
+    def _init_tables(self) -> None:
+        """Define database tables, instance variables.
+
+        This method is called before `_create` but after the
+        `_engine` and `_metadata` are initialised, in `__init__`.
+        """
+        raise NotImplementedError("Implemented by child class")
+
+    def _create(self, overwrite: bool = False) -> None:
+        """Create database if it doesn't already exist.
+
+        Parameters
+        ----------
+        overwrite : bool, default False
+            Whether to delete database if it already exists.
+        """
+        if self._path.is_file() and overwrite:
+            self._path.unlink()
+
+        if not self._path.is_file():
+            self._metadata.create_all(self._engine)
+
+    @property
+    def engine(self) -> sqlalchemy.Engine:
+        """Database engine object."""
+        return self._engine
+
+    def connect(self) -> sqlalchemy.Connection:
+        """Connect to database and return connection."""
+        return self._engine.connect()
+
+
+class RawAVLDatabase(_Database):
+    """Manages interactions with an SQlite database to store raw AVL data."""
+
+    _metadata_table_name = "avl_metadata"
+    _vehicle_activity_table_name = "vehicle_activity"
+
+    def _init_tables(self) -> None:
+        # inherited docstring
         self._metadata_table = sqlalchemy.Table(
             self._metadata_table_name,
             self._metadata,
-            sqlalchemy.Column(
-                "id", types.Integer, primary_key=True, autoincrement=True
-            ),
+            sqlalchemy.Column("id", types.Integer, primary_key=True, autoincrement=True),
             *columns_from_class(raw.AVLMetadata),
         )
 
@@ -68,21 +109,6 @@ class RawAVLDatabase:
             ),
             *columns_from_class(raw.VehicleActivity),
         )
-
-        if path.is_file() and overwrite:
-            path.unlink()
-
-        if not path.is_file():
-            self._metadata.create_all(self._engine)
-
-    @property
-    def engine(self) -> sqlalchemy.Engine:
-        """Database engine object."""
-        return self._engine
-
-    def connect(self) -> sqlalchemy.Connection:
-        """Connect to database and return connection."""
-        return self._engine.connect()
 
     def insert_avl_metadata(
         self, conn: sqlalchemy.Connection, metadata: raw.AVLMetadata
