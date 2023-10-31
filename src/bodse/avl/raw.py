@@ -26,6 +26,7 @@ SIRI_NAMESPACES = {"siri": "http://www.siri.org.uk/siri"}
 VEHICLE_MONITORING_TAG = "siri:ServiceDelivery/siri:VehicleMonitoringDelivery"
 T = TypeVar("T")
 
+
 ##### CLASSES #####
 class AVLParseWarning(RuntimeWarning):
     """Warning when parsing AVL Siri XML data."""
@@ -65,9 +66,7 @@ class AVLMetadata:
         producer_ref = _findtext(root, cls._producer_ref_tag, parent, default="unknown")
         assert isinstance(producer_ref, str)
 
-        vehicle_monitoring = _find(
-            root, VEHICLE_MONITORING_TAG, parent, if_missing="error"
-        )
+        vehicle_monitoring = _find(root, VEHICLE_MONITORING_TAG, parent, if_missing="error")
         assert vehicle_monitoring is not None
 
         data = {}
@@ -79,6 +78,7 @@ class AVLMetadata:
     @classmethod
     def get_fields(cls) -> list[fields.ModelField]:
         """List of data fields."""
+        # Added by dataclass decorator pylint: disable=no-member
         return list(cls.__dataclass_fields__.values())
 
     @property
@@ -151,8 +151,7 @@ class VehicleActivity:
         "destination_scheduled_time": "siri:DestinationAimedArrivalTime",
         "bearing": "siri:Bearing",
         "data_frame_ref": "siri:FramedVehicleJourneyRef/siri:DataFrameRef",
-        "vehicle_journey_ref": "siri:FramedVehicleJourneyRef"
-        "/siri:DatedVehicleJourneyRef",
+        "vehicle_journey_ref": "siri:FramedVehicleJourneyRef/siri:DatedVehicleJourneyRef",
     }
     _vehicle_journey_tags = {
         "vehicle_id": "siri:VehicleUniqueId",
@@ -198,15 +197,14 @@ class VehicleActivity:
         )
         if vehicle_journey is not None:
             for name, tag in cls._vehicle_journey_tags.items():
-                data[name] = _findtext(
-                    vehicle_journey, tag, parent, if_missing="ignore"
-                )
+                data[name] = _findtext(vehicle_journey, tag, parent, if_missing="ignore")
 
         return VehicleActivity(**data)
 
     @classmethod
     def get_fields(cls) -> list[fields.ModelField]:
         """List of data fields."""
+        # Added by dataclass decorator pylint: disable=no-member
         return list(cls.__dataclass_fields__.values())
 
     @property

@@ -11,7 +11,7 @@ from typing import Any, Optional
 from urllib import parse
 
 from google.transit import gtfs_realtime_pb2
-from pydantic import dataclasses
+from pydantic import dataclasses, fields
 import pydantic
 
 from bodse import request
@@ -38,6 +38,12 @@ class _GTFSDataclass(abc.ABC):
         """
         raise NotImplementedError("Abtract method not implemented in ABC")
 
+    @classmethod
+    def get_fields(cls) -> list[fields.ModelField]:
+        """List of data fields."""
+        # Added by dataclass decorator pylint: disable=no-member
+        return list(cls.__dataclass_fields__.values())
+
 
 class _GTFSEntity(abc.ABC):
     "Base class for GTFS dataclasses containing feed entities."
@@ -57,6 +63,12 @@ class _GTFSEntity(abc.ABC):
             GTFS feed entity flag.
         """
         raise NotImplementedError("Abtract method not implemented in ABC")
+
+    @classmethod
+    def get_fields(cls) -> list[fields.ModelField]:
+        """List of data fields."""
+        # Added by dataclass decorator pylint: disable=no-member
+        return list(cls.__dataclass_fields__.values())
 
 
 class Incrementality(enum.IntEnum):
