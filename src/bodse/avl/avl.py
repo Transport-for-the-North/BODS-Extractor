@@ -95,7 +95,7 @@ def store_raw(avl_database: database.RawAVLDatabase, auth: request.APIAuth):
 
 def _readable_timedelta(delta: dt.timedelta) -> str:
     """Convert to readable string with varying resolution.
-    
+
     String contains only the largest 2 units from days, hours,
     minutes and seconds e.g. "3 days, 2 hrs", "10 hrs, 16 mins"
     or "37 mins, 42 secs".
@@ -137,7 +137,8 @@ def _download_iterator(timings: DownloadTime) -> Iterator[int]:
         days=timings.days, hours=timings.hours, minutes=timings.minutes
     )
     LOG.info(
-        "Starting continuous downloads every %s minutes, which will finish at %s",
+        "Starting continuous downloads approximately "
+        "every %s minute(s), which will finish at %s",
         timings.wait_minutes,
         f"{end:%c}",
     )
@@ -170,11 +171,17 @@ def main(params: DownloaderConfig):
         bods_auth = request.APIAuth.load_yaml(params.api_auth_config)
         LOG.info("Accessing BODS using user account: %s", bods_auth.name)
 
+        gtfs_db = database.GTFSRTDatabase(output_folder / "gtfs-rt.sqlite")
+
         for _ in _download_iterator(params.download_time):
             try:
                 feed = gtfs.download(bods_auth)
-                # TODO Store data in a local SQLite database
             except requests.HTTPError as exc:
                 LOG.error("HTTP error when downloading AVL feed: %s", exc)
+                continue
+
+            with gtfs_db.connect() as conn:
+                gtfs_db.insert_feed(conn, feed)
+                conn.commit()
 
         LOG.info("Finished downloading AVL data")

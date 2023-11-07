@@ -50,7 +50,7 @@ class _GTFSEntity(abc.ABC):
 
     @staticmethod
     @abc.abstractmethod
-    def from_gtfs(id_: str, data: Any, is_deleted: bool = False) -> _GTFSDataclass:
+    def from_gtfs(id_: str, data: Any, is_deleted: bool = False) -> _GTFSEntity:
         """Extract GTFS-rt data from gtfs_realtime_pb2 entity object.
 
         Parameters
@@ -242,7 +242,7 @@ class StopTimeUpdate(_GTFSDataclass):
 class TripUpdate(_GTFSEntity):
     """GTFS-rt trip update entity data."""
 
-    id: str
+    feed_id: str
     trip: TripDescriptor
     vehicle: Optional[VehicleDescriptor]
     stop_time_update: list[StopTimeUpdate]
@@ -277,7 +277,7 @@ class TripUpdate(_GTFSEntity):
         scalars = _get_fields(data, "timestamp", "delay")
 
         return TripUpdate(
-            id=id_,
+            feed_id=id_,
             trip=TripDescriptor.from_gtfs(data.trip),
             vehicle=vehicle,
             stop_time_update=[StopTimeUpdate.from_gtfs(i) for i in data.stop_time_update],
@@ -350,7 +350,7 @@ class OccupancyStatus(enum.IntEnum):
 class VehiclePosition(_GTFSEntity):
     """GTFS-rt trip vehicle position (AVL) data."""
 
-    id: str
+    feed_id: str
     trip: Optional[TripDescriptor] = None
     vehicle: Optional[VehicleDescriptor] = None
     position: Optional[Position] = None
@@ -391,7 +391,9 @@ class VehiclePosition(_GTFSEntity):
             data, {"trip": TripDescriptor, "vehicle": VehicleDescriptor, "position": Position}
         )
 
-        return VehiclePosition(id=id_, **classes, **optional_fields, is_deleted=is_deleted)
+        return VehiclePosition(
+            feed_id=id_, **classes, **optional_fields, is_deleted=is_deleted
+        )
 
 
 @dataclasses.dataclass

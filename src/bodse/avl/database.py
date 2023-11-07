@@ -4,10 +4,11 @@
 ##### IMPORTS #####
 # Standard imports
 import abc
+import collections
 import logging
 import pathlib
 import re
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 # Third party imports
 from pydantic import fields
@@ -15,15 +16,26 @@ import sqlalchemy
 from sqlalchemy import types
 
 # Local imports
-from bodse.avl import raw
+from bodse.avl import raw, gtfs
 
 ##### CONSTANTS #####
 LOG = logging.getLogger(__name__)
-SQLALCHEMY_TYPE_LOOKUP = {
+_SQLALCHEMY_TYPE_LOOKUP = {
+    # Built-in types
     "str": types.String,
     "int": types.Integer,
+    "conint": types.Integer,
     "float": types.Float,
-    "dt.datetime": types.DateTime,
+    "datetime": types.DateTime,
+    "date": types.DateTime,
+    "time": types.Time,
+    "bool": types.Boolean,
+    # Custom enum types
+    "incrementality": types.Enum(gtfs.Incrementality),
+    "schedulerelationship": types.Enum(gtfs.ScheduleRelationship),
+    "vehiclestopstatus": types.Enum(gtfs.VehicleStopStatus),
+    "congestionlevel": types.Enum(gtfs.CongestionLevel),
+    "occupancystatus": types.Enum(gtfs.OccupancyStatus),
 }
 
 
@@ -168,6 +180,162 @@ class RawAVLDatabase(_Database):
         conn.execute(stmt)
 
 
+class GTFSRTDatabase(_Database):
+    """Creates and accesses a database for storing GTFS-rt feed messages."""
+
+    _metadata_table_name = "gtfs_rt_meta"
+    _trip_table_name = "gtfs_rt_trip_updates"
+    _positions_table_name = "gtfs_rt_vehicle_positions"
+
+    _prefixes = collections.defaultdict(
+        lambda: "",
+        vehicle_descriptor="vehicle_",
+        stop_arrival="arrival_",
+        stop_departure="departure_",
+    )
+    _excludes = {
+        "stop_time_update": {"arrival", "departure"},
+        "trip_update": {"feed_id", "trip", "vehicle", "stop_time_update"},
+        "vehicle_position": {"feed_id", "trip", "vehicle", "position"},
+    }
+
+    def _init_tables(self) -> None:
+        # inherited docstring
+        id_column = sqlalchemy.Column("id", types.Integer, primary_key=True)
+
+        self._metadata_table = sqlalchemy.Table(
+            self._metadata_table_name,
+            self._metadata,
+            id_column,
+            *columns_from_class(gtfs.FeedHeader),
+        )
+
+        # Define columns with same names and types across both tables
+        metadata_column = sqlalchemy.Column(
+            "metadata_id",
+            types.Integer,
+            sqlalchemy.ForeignKey(f"{self._metadata_table_name}.id"),
+            nullable=False,
+        )
+        feed_id_column = sqlalchemy.Column("feed_id", types.String, nullable=False)
+
+        # Not yet implemented functionality to store trip updates in the database
+        if False:
+            self._trip_table = sqlalchemy.Table(
+                self._trip_table_name,
+                self._metadata,
+                id_column.copy(),
+                metadata_column.copy(),
+                feed_id_column.copy(),
+                *columns_from_class(gtfs.TripDescriptor),
+                *columns_from_class(
+                    gtfs.VehicleDescriptor, prefix=self._prefixes["vehicle_descriptor"]
+                ),
+                *columns_from_class(
+                    gtfs.StopTimeUpdate, exclude_fields=self._excludes.get("stop_time_update")
+                ),
+                *columns_from_class(gtfs.StopTimeEvent, prefix=self._prefixes["stop_arrival"]),
+                *columns_from_class(
+                    gtfs.StopTimeEvent, prefix=self._prefixes["stop_departure"]
+                ),
+                *columns_from_class(
+                    gtfs.TripUpdate,
+                    exclude_fields=self._excludes.get("trip_update"),
+                ),
+            )
+
+        self._positions_table = sqlalchemy.Table(
+            self._positions_table_name,
+            self._metadata,
+            id_column.copy(),
+            metadata_column.copy(),
+            feed_id_column.copy(),
+            *columns_from_class(gtfs.TripDescriptor),
+            *columns_from_class(
+                gtfs.VehicleDescriptor, prefix=self._prefixes["vehicle_descriptor"]
+            ),
+            *columns_from_class(gtfs.Position),
+            *columns_from_class(
+                gtfs.VehiclePosition, exclude_fields=self._excludes.get("vehicle_position")
+            ),
+        )
+
+        self._alerts_table = NotImplemented
+
+    def _get_max_metadata_id(self, conn: sqlalchemy.Connection) -> int:
+        stmt = (
+            self._metadata_table.select()
+            .with_only_columns(self._metadata_table.c.id)
+            .order_by(self._metadata_table.c.id.desc())
+            .limit(1)
+        )
+        result = conn.execute(stmt).fetchone()
+
+        if result is None:
+            return 0
+        return result.id + 1
+
+    def _insert_positions(
+        self, conn: sqlalchemy.Connection, metadata_id: int, position: gtfs.VehiclePosition
+    ) -> None:
+        """Insert vehicle position data into `_positions_table`.
+
+        This executes the query but does not commit.
+        """
+        stmt = self._positions_table.insert().values(
+            metadata_id=metadata_id,
+            feed_id=position.feed_id,
+            **values_from_class(position.trip),
+            **values_from_class(position.vehicle, prefix=self._prefixes["vehicle_descriptor"]),
+            **values_from_class(position.position),
+            **values_from_class(
+                position, exclude_fields=self._excludes.get("vehicle_position")
+            ),
+        )
+
+        conn.execute(stmt)
+
+    def insert_feed(self, conn: sqlalchemy.Connection, feed: gtfs.FeedMessage) -> None:
+        """Insert data from GTFS-rt feed into database.
+
+        This executes the queries but does not commit.
+
+        Parameters
+        ----------
+        conn : sqlalchemy.Connection
+            Connection to SQLite database.
+        feed : gtfs.FeedMessage
+            GTFS-rt feed message data.
+
+        Raises
+        ------
+        NotImplementedError
+            If any trip updates or alerts are provided as
+            functionality for storing these in the database
+            hasn't been implemented.
+        """
+        meta_id = self._get_max_metadata_id(conn)
+        LOG.info("Inserting feed into database with ID: %s", meta_id)
+
+        stmt = self._metadata_table.insert().values(
+            id=meta_id,
+            timestamp=feed.header.timestamp,
+            gtfs_realtime_version=feed.header.gtfs_realtime_version,
+            incrementality=feed.header.incrementality,
+        )
+        conn.execute(stmt)
+
+        for _ in feed.updates:
+            raise NotImplementedError("functionality for storing trip updates in the database")
+
+        LOG.info("Inserting %s positions into database", len(feed.positions))
+        for position in feed.positions:
+            self._insert_positions(conn, meta_id, position)
+
+        for _ in feed.alerts:
+            raise NotImplementedError("functionality for storing alerts in the database")
+
+
 class _DataStorage(Protocol):
     @classmethod
     def get_fields(cls) -> list[fields.ModelField]:
@@ -175,8 +343,19 @@ class _DataStorage(Protocol):
 
 
 ##### FUNCTIONS #####
-def columns_from_class(dataclass: _DataStorage) -> list[sqlalchemy.Column]:
+def columns_from_class(
+    dataclass: _DataStorage, prefix: str = "", exclude_fields: Optional[set[str]] = None
+) -> list[sqlalchemy.Column]:
     """Determine columns for database table based on dataclass.
+
+    Parameters
+    ----------
+    dataclass : _DataStorage
+        Class to get data from, should have `get_fields` method.
+    prefix : str, default ""
+        Prefix to prepend to the attributes to get column names.
+    exclude_fields : set[str], optional
+        Names of any attributes in `dataclass` to exclude from output.
 
     Returns
     -------
@@ -186,8 +365,11 @@ def columns_from_class(dataclass: _DataStorage) -> list[sqlalchemy.Column]:
     columns = []
 
     for field in dataclass.get_fields():
+        if exclude_fields is not None and field.name in exclude_fields:
+            continue
+
         type_, nullable = type_lookup(field.type)
-        col = sqlalchemy.Column(field.name, type_=type_, nullable=nullable)
+        col = sqlalchemy.Column(prefix + field.name, type_=type_, nullable=nullable)
         columns.append(col)
 
     return columns
@@ -213,17 +395,63 @@ def type_lookup(type_name: str) -> tuple[type[Any], bool]:
     KeyError
         If name of Python type isn't in `SQLALCHEMY_TYPE_LOOKUP`.
     """
-    match = re.match(r"^(?:(\w+)?\[)?([\w.]+)\]?$", type_name.strip())
+    match = re.match(
+        r"^(?:(\w+)?\[)?"  # Collection / typing e.g. list, dict, Union, Optional
+        r"(\w+\.)?"  # Module name, can't handle multiple modules
+        r"(\w+)"  # Type name
+        r"(\(.*\))?"  # Optional brackets for pydantic's callable types e.g. conint(ge=0)
+        r"\]?$",  # Optional closing bracket ']'
+        type_name.strip(),
+    )
 
     if match is None:
         raise ValueError(f"unexpected type format: '{type_name}'")
 
     prefix = match.group(1)
-    type_ = match.group(2).lower()
+    type_ = match.group(3).lower()
 
-    if prefix is not None and prefix.lower() == "optional":
-        nullable = True
-    else:
-        nullable = False
+    nullable = prefix is not None and prefix.lower() == "optional"
 
-    return SQLALCHEMY_TYPE_LOOKUP[type_], nullable
+    return _SQLALCHEMY_TYPE_LOOKUP[type_], nullable
+
+
+def values_from_class(
+    dataclass: Optional[_DataStorage],
+    prefix: str = "",
+    exclude_fields: Optional[set[str]] = None,
+) -> dict[str, Any]:
+    """Get attributes and values from `dataclass`.
+
+    Parameters
+    ----------
+    dataclass : _DataStorage
+        Class to get data from, should have `get_fields` method.
+        If None, an empty dictionary is returned.
+    prefix : str, default ""
+        Prefix to prepend to the attribute names in the dictionary.
+    exclude_fields : set[str], optional
+        Names of any attributes in `dataclass` to exclude from output.
+
+    Returns
+    -------
+    dict[str, Any]
+        Attribute value pairs, with possible prefix on the keys.
+
+    Raises
+    ------
+    TypeError
+        If `dataclass` is a type rather than an instance.
+    """
+    data: dict[str, Any] = {}
+    if dataclass is None:
+        return data
+    if isinstance(dataclass, type):
+        raise TypeError(f"expected instance of _DataStorage not {type(dataclass)}")
+
+    for field in dataclass.get_fields():
+        if exclude_fields is not None and field.name in exclude_fields:
+            continue
+
+        data[prefix + field.name] = getattr(dataclass, field.name)
+
+    return data
