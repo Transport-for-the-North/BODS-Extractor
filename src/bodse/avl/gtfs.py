@@ -159,6 +159,20 @@ class TripDescriptor(_GTFSDataclass):
     schedule_relationship: Optional[ScheduleRelationship] = None
     "The relation between this trip and the static schedule."
 
+    @pydantic.validator("start_date", pre=True)
+    def _parse_date(cls, value: Optional[str]) -> Optional[dt.date]:
+        # pylint: disable=no-self-argument
+        if value is None:
+            return None
+        return dt.date.fromisoformat(value)
+
+    @pydantic.validator("start_time", pre=True)
+    def _parse_time(cls, value: Optional[str]) -> Optional[dt.time]:
+        # pylint: disable=no-self-argument
+        if value is None:
+            return None
+        return dt.time.fromisoformat(value)
+
     @staticmethod
     def from_gtfs(data) -> TripDescriptor:
         """Extract from gtfs_realtime_pb2 TripDescriptor object."""
