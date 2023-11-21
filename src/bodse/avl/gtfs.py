@@ -173,6 +173,19 @@ class TripDescriptor(_GTFSDataclass):
             return None
         return dt.time.fromisoformat(value)
 
+    @pydantic.validator("trip_id")
+    def _empty_strings(cls, value: Optional[str]) -> Optional[str]:
+        """Check if string is empty and return None if so."""
+        # pylint: disable=no-self-argument
+        if value is None:
+            return value
+
+        value = value.strip()
+        if len(value) == 0:
+            return None
+
+        return value
+
     @staticmethod
     def from_gtfs(data) -> TripDescriptor:
         """Extract from gtfs_realtime_pb2 TripDescriptor object."""
