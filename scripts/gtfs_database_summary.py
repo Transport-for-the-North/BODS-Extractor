@@ -161,7 +161,13 @@ def _histogram_table(
     row_labels.append(f">= {np.max(bins)}")
 
     counts = [below_range, *counts, above_range]
-    cells = [(l, f"{i:,.0f}", f"{i/total_count:.0%}") for l, i in zip(row_labels, counts)]
+    cells: list[tuple[str, str, str]] = []
+    for label, count in zip(row_labels, counts):
+        percentage = count / total_count
+        # Set label to 1 d.p. for percentages < 1%
+        perc_label = f"{percentage:.0%}" if percentage >= 0.01 else f"{percentage:.1%}"
+
+        cells.append((label, f"{count:,.0f}", perc_label))
 
     fig, ax = plt.subplots(layout="tight", figsize=(5, 4))
     assert isinstance(ax, plt.Axes)
