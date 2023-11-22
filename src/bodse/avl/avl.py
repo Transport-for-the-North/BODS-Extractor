@@ -174,6 +174,8 @@ def main(params: DownloaderConfig):
         gtfs_db = database.GTFSRTDatabase(output_folder / "gtfs-rt.sqlite")
 
         for _ in _download_iterator(params.download_time):
+            # TODO Look into using concurrent.futures.ThreadPoolExecutor to perform
+            # download and insert while the iterator is waiting
             try:
                 feed = gtfs.download(bods_auth)
             except requests.HTTPError as exc:

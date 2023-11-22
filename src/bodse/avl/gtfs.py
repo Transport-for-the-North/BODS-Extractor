@@ -10,19 +10,32 @@ import logging
 from typing import Any, Optional
 from urllib import parse
 
+import numpy as np
+import pydantic
 from google.transit import gtfs_realtime_pb2
 from pydantic import dataclasses, fields
-import pydantic
 
 from bodse import request
 
-
 ##### CONSTANTS #####
+
 LOG = logging.getLogger(__name__)
 API_ENDPOINT = "gtfsrtdatafeed/"
 
+# Pyproj is an optional dependancy only required for calculating
+# easting / northing, if not given NaN's will be returned for those
+# values
+try:
+    from pyproj import transformer
+except ModuleNotFoundError:
+    _COORD_TRANSFORMER = None
+else:
+    _COORD_TRANSFORMER = transformer.Transformer.from_crs("EPSG:4326", "EPSG:27700")
+
 
 ##### CLASSES #####
+
+
 class _GTFSDataclass(abc.ABC):
     "Base class for GTFS dataclasses."
 
@@ -321,6 +334,10 @@ class Position(_GTFSDataclass):
     "Degrees North, in the WGS-84 coordinate system."
     longitude: float
     "Degrees East, in the WGS-84 coordinate system."
+    easting: float
+    "British National Grid (EPSG:27700) easting."
+    northing: float
+    "British National Grid (EPSG:27700) northing."
     bearing: Optional[float] = None
     "Bearing, in degrees, clockwise from North."
     odometer: Optional[float] = None
@@ -333,6 +350,11 @@ class Position(_GTFSDataclass):
         """Extract from gtfs_realtime_pb2 Position object."""
         mandatory = _get_fields(data, "latitude", "longitude", raise_missing=True)
         optional = _get_fields(data, "bearing", "odometer", "speed")
+
+        mandatory["easting"], mandatory["northing"] = _lat_lon_to_bng(
+            mandatory["latitude"], mandatory["longitude"]
+        )
+
         return Position(**mandatory, **optional)
 
 
@@ -483,6 +505,8 @@ class FeedMessage:
 
 
 ##### FUNCTIONS #####
+
+
 def _get_fields(data: Any, *fields: str, raise_missing: bool = False) -> dict[str, Any]:
     """Get field values from gtfs_realtime_pb2 object.
 
@@ -581,3 +605,14 @@ def download(
     )
 
     return feed
+
+
+def _lat_lon_to_bng(latitude: float, longitude: float) -> tuple[float, float]:
+    """Convert latitude and longitude to easting and northing.
+
+    Depenancy pyproj is required for this to work, if it isn't
+    available (NaN, NaN) is returned.
+    """
+    if _COORD_TRANSFORMER is None:
+        return (np.nan, np.nan)
+    return _COORD_TRANSFORMER.transform(latitude, longitude)
