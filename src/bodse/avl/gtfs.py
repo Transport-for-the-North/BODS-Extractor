@@ -22,15 +22,25 @@ from bodse import request
 LOG = logging.getLogger(__name__)
 API_ENDPOINT = "gtfsrtdatafeed/"
 
+_GTFS_COORDINATES_CRS = "EPSG:4326"  # longitude / latitude
+_EASTING_NORTHING_CRS = "EPSG:27700"
+_MINIMUM_TRANSFORM_ACCURACY = 5
+
 # Pyproj is an optional dependancy only required for calculating
 # easting / northing, if not given NaN's will be returned for those
 # values
 try:
+    import pyproj
     from pyproj import transformer
 except ModuleNotFoundError:
     _COORD_TRANSFORMER = None
 else:
-    _COORD_TRANSFORMER = transformer.Transformer.from_crs("EPSG:4326", "EPSG:27700")
+    _COORD_TRANSFORMER = transformer.Transformer.from_crs(
+        _GTFS_COORDINATES_CRS,
+        _EASTING_NORTHING_CRS,
+        accuracy=_MINIMUM_TRANSFORM_ACCURACY,
+        allow_ballpark=False,
+    )
 
 
 ##### CLASSES #####
@@ -615,4 +625,11 @@ def _lat_lon_to_bng(latitude: float, longitude: float) -> tuple[float, float]:
     """
     if _COORD_TRANSFORMER is None:
         return (np.nan, np.nan)
-    return _COORD_TRANSFORMER.transform(latitude, longitude)
+
+    try:
+        return _COORD_TRANSFORMER.transform(latitude, longitude, errcheck=True)
+    except pyproj.ProjError:
+        LOG.error(
+            "Error transforming coordinates (%s, %s)", longitude, latitude, exc_info=True
+        )
+        return (np.nan, np.nan)
