@@ -9,6 +9,7 @@ import enum
 import logging
 from typing import Any, Optional
 from urllib import parse
+import warnings
 
 import numpy as np
 import pydantic
@@ -224,6 +225,21 @@ class TripDescriptor(_GTFSDataclass):
         return TripDescriptor(**scalars)
 
 
+class WheelchairAccessible(enum.IntEnum):
+    """Whether, or not, a vehicle is wheelchair accessible."""
+
+    NO_VALUE = 0
+    """The trip doesn't have information about wheelchair accessibility
+    (default behaviour don't overwrite GTFS schedule)."""
+    UNKNOWN = 1
+    """The trip has no accessibility value present 
+    (should overwrite GTFS according to specification)."""
+    WHEELCHAIR_ACCESSIBLE = 2
+    "The trip is wheelchair accessible."
+    WHEELCHAIR_INACCESSIBLE = 3
+    "The trip is not wheelchair accessible."
+
+
 @dataclasses.dataclass
 class VehicleDescriptor(_GTFSDataclass):
     "Identification information for the vehicle performing the trip."
@@ -234,11 +250,16 @@ class VehicleDescriptor(_GTFSDataclass):
     "User visible label"
     license_plate: Optional[str] = None
     "The license plate of the vehicle."
+    wheelchair_accessible: WheelchairAccessible = WheelchairAccessible.NO_VALUE
+    """wheelchair_accessible isn't implemented in gtfs-realtime-bindings v1.0.0,
+    but is defined in the GTFS-rt specification."""
 
     @staticmethod
     def from_gtfs(data) -> VehicleDescriptor:
         """Extract from gtfs_realtime_pb2 VehicleDescriptor object."""
-        return VehicleDescriptor(**_get_fields(data, "id", "label", "license_plate"))
+        return VehicleDescriptor(
+            **_get_fields(data, "id", "label", "license_plate", "wheelchair_accessible")
+        )
 
 
 @dataclasses.dataclass
@@ -517,14 +538,14 @@ class FeedMessage:
 ##### FUNCTIONS #####
 
 
-def _get_fields(data: Any, *fields: str, raise_missing: bool = False) -> dict[str, Any]:
+def _get_fields(data: Any, *field_names: str, raise_missing: bool = False) -> dict[str, Any]:
     """Get field values from gtfs_realtime_pb2 object.
 
     Parameters
     ----------
     data : Any
         gtfs_realtime_pb2 object, expected to have `HasField` method.
-    fields : str
+    field_names : str
         Name(s) of attributes to get from `data`.
     raise_missing : bool, default False
         If True, raises `ValueError` if any `fields` are missing.
@@ -536,8 +557,14 @@ def _get_fields(data: Any, *fields: str, raise_missing: bool = False) -> dict[st
     """
     values = {}
     missing = []
-    for name in fields:
-        if data.HasField(name):
+    for name in field_names:
+        try:
+            has_field = data.HasField(name)
+        except ValueError:
+            warnings.warn(f"'{name}' field not in GTFS-rt object {type(data)}", RuntimeWarning)
+            has_field = False
+
+        if has_field:
             values[name] = getattr(data, name)
         elif raise_missing:
             missing.append(name)
@@ -548,7 +575,7 @@ def _get_fields(data: Any, *fields: str, raise_missing: bool = False) -> dict[st
 
 
 def _dataclass_fields(
-    data: Any, fields: dict[str, _GTFSDataclass], raise_missing: bool = False
+    data: Any, field_classes: dict[str, _GTFSDataclass], raise_missing: bool = False
 ) -> dict[str, _GTFSDataclass]:
     """Produce `_GTFSDataclass` for fields in gtfs_realtime_pb2 object.
 
@@ -556,7 +583,7 @@ def _dataclass_fields(
     ----------
     data : Any
         gtfs_realtime_pb2 object, expected to have `HasField` method.
-    fields : dict[str, _GTFSDataclass]
+    field_classes : dict[str, _GTFSDataclass]
         Name(s) of attributes to get from `data` and the `_GTFSDataclass`
         to contain that fields data.
     raise_missing : bool, default False
@@ -567,11 +594,11 @@ def _dataclass_fields(
     dict[str, Any]
         Field names and values.
     """
-    values = _get_fields(data, *list(fields.keys()), raise_missing=raise_missing)
+    values = _get_fields(data, *list(field_classes.keys()), raise_missing=raise_missing)
     classes = {}
 
     for name, value in values.items():
-        classes[name] = fields[name].from_gtfs(value)
+        classes[name] = field_classes[name].from_gtfs(value)
 
     return classes
 
