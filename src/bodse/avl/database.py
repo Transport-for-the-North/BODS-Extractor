@@ -216,6 +216,7 @@ class GTFSRTDatabase(_Database):
             types.Integer,
             sqlalchemy.ForeignKey(f"{self._metadata_table_name}.id"),
             nullable=False,
+            index=True,
         )
         feed_id_column = sqlalchemy.Column("feed_id", types.String, nullable=False)
 
@@ -335,6 +336,10 @@ class GTFSRTDatabase(_Database):
         for _ in feed.alerts:
             raise NotImplementedError("functionality for storing alerts in the database")
 
+
+    def create_indices(self) -> None:
+        # TODO(MB) Add indices to database to speed up future queries
+        raise NotImplementedError("WIP!")
 
 class _DataStorage(Protocol):
     @classmethod

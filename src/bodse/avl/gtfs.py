@@ -407,13 +407,17 @@ class VehiclePosition(_GTFSEntity):
     stop_id: Optional[str] = None
     current_status: VehicleStopStatus = VehicleStopStatus.IN_TRANSIT_TO
     timestamp: Optional[dt.datetime] = None
+    position_delay_seconds: Optional[int] = None
     congestion_level: Optional[CongestionLevel] = None
     occupancy_status: Optional[OccupancyStatus] = None
     is_deleted: bool = False
 
     @staticmethod
     def from_gtfs(
-        id_: str, data: gtfs_realtime_pb2.VehiclePosition, is_deleted: bool = False
+        id_: str,
+        data: gtfs_realtime_pb2.VehiclePosition,
+        is_deleted: bool = False,
+        response_timestamp: Optional[dt.datetime] = None,
     ) -> VehiclePosition:
         """Extract GTFS-rt data from gtfs_realtime_pb2 VehiclePosition entity object.
 
@@ -425,6 +429,9 @@ class VehiclePosition(_GTFSEntity):
             GTFS feed entity data.
         is_deleted : bool, default False
             GTFS feed entity flag.
+        response_timestamp : dt.datetime, optional
+            Timestamp for the AVL request response, used to
+            calculate `position_delay_seconds`.
         """
         optional_fields = _get_fields(
             data,
@@ -440,8 +447,18 @@ class VehiclePosition(_GTFSEntity):
             data, {"trip": TripDescriptor, "vehicle": VehicleDescriptor, "position": Position}
         )
 
+        if response_timestamp is not None and "timestamp" in optional_fields:
+            timestamp: dt.datetime = optional_fields["timestamp"]
+            delay = (response_timestamp - timestamp).total_seconds()
+        else:
+            delay = None
+
         return VehiclePosition(
-            feed_id=id_, **classes, **optional_fields, is_deleted=is_deleted
+            feed_id=id_,
+            **classes,
+            **optional_fields,
+            is_deleted=is_deleted,
+            position_delay_seconds=delay,
         )
 
 
