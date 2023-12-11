@@ -233,7 +233,7 @@ def _compare_timestamps(
             LEFT JOIN gtfs_rt_vehicle_positions v ON m.id = v.metadata_id
 
         WHERE m.id >= :start_id AND m.id <= :end_id
-            AND length(v.trip_id) > 0
+            AND v.trip_id IS NOT NULL
         """
     )
     data = pd.read_sql(
@@ -512,8 +512,8 @@ def _plot_insert_timings(timings: pd.DataFrame, output_file: pathlib.Path) -> No
 
     plot_parameters = (
         ("Response ID", _InsertTimeColumns.ID, False),
-        ("Insert Time", _InsertTimeColumns.INSERT_TIME, True),
         ("No. Rows in Database", _InsertTimeColumns.CUMM_POSITIONS, False),
+        ("Insert Time", _InsertTimeColumns.INSERT_TIME, True),
     )
 
     with backend_pdf.PdfPages(output_file.with_suffix(".pdf")) as pdf:
@@ -530,6 +530,18 @@ def _plot_insert_timings(timings: pd.DataFrame, output_file: pathlib.Path) -> No
             )
             pdf.savefig(fig)
             plt.close(fig)
+
+        fig = _insert_timings_figure(
+            timings[_InsertTimeColumns.INSERT_TIME].values,
+            timings[_InsertTimeColumns.POSITIONS].values,
+            period,
+            "Insert Time",
+            "No. Positions in Response",
+            "AVL Count of Positions in Response Over Time",
+            xdata_date=True,
+        )
+        pdf.savefig(fig)
+        plt.close(fig)
 
     LOG.info("Written: %s", output_file)
 
