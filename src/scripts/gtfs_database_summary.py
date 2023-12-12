@@ -546,6 +546,182 @@ def _plot_insert_timings(timings: pd.DataFrame, output_file: pathlib.Path) -> No
     LOG.info("Written: %s", output_file)
 
 
+def _load_response_positions_counts(conn: sqlalchemy.Connection) -> pd.DataFrame:
+    """Extract count of positions per response from database.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with multilevel index:
+        - "Delay (mins)": difference between response and AVL timestamps
+        as a range e.g. '0-5'
+        - "Response Time": response timestamp
+
+        Columns all contain the number of positions for that response split
+        into: "Total Positions", "With Trip ID", "Without Trip ID".
+    """
+    LOG.info("Extracting count of positions per response")
+
+    seconds_divisor = 300
+    stmt = sql.text(
+        """SELECT
+            meta.timestamp, pos.positions_delay_group,
+            pos.n_rows, pos.trip_id, pos.null_trip_id
+
+        FROM (
+            SELECT
+                metadata_id,
+                ceil(position_delay_seconds / :seconds_div) AS positions_delay_group,
+                count(*) AS n_rows,
+                count(trip_id) AS trip_id,
+                count(*) - count(trip_id) AS null_trip_id
+
+            FROM gtfs_rt_vehicle_positions
+
+            GROUP BY metadata_id, positions_delay_group
+        ) pos
+            LEFT JOIN gtfs_rt_meta meta ON pos.metadata_id = meta.id
+        """
+    ).bindparams(seconds_div=float(seconds_divisor))
+    # Needs to be a float so SQLite doesn't do an int divide
+
+    data = pd.read_sql(stmt, conn)
+    data.loc[:, "positions_delay_group"] = data["positions_delay_group"] * (
+        seconds_divisor / 60
+    )
+    data = data.rename(columns={"positions_delay_group": "positions_delay_minutes"})
+
+    groups = [
+        (0, 5),
+        (5, 10),
+        (10, 30),
+        (30, np.ceil(np.max(data["positions_delay_minutes"]))),
+    ]
+    for i, j in groups:
+        mask = (data["positions_delay_minutes"] > i) & (data["positions_delay_minutes"] <= j)
+        data.loc[mask, "delay_group"] = f"{i:.0f}-{j:.0f}"
+
+    if data["delay_group"].isna().any():
+        raise ValueError("some rows have an undefined delay group")
+
+    data.loc[:, "timestamp"] = pd.to_datetime(data["timestamp"])
+
+    data = data.rename(
+        columns={
+            "delay_group": "Delay (mins)",
+            "timestamp": "Response Time",
+            "n_rows": "Total Positions",
+            "trip_id": "With Trip ID",
+            "null_trip_id": "Without Trip ID",
+        }
+    )
+
+    return data.groupby(["Delay (mins)", "Response Time"])[
+        "Total Positions", "With Trip ID", "Without Trip ID"
+    ].sum()
+
+
+def _plot_response_positions_counts(
+    data: pd.DataFrame, title: str, mean_period: int, index_date: bool = False
+) -> figure.Figure:
+    """Plot rolling mean of count of positions per response.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Count of positions, index values used for x-axis and
+        name used for labels and all columns are plotted as
+        separate lines on the same axes.
+    title : str
+        Figure title.
+    mean_period : int
+        Rolling mean period, should be odd.
+    index_date : bool, optional
+        If True formats the x-axis labels as dates.
+
+    Raises
+    ------
+    ValueError
+        If `mean_period` is odd.
+    """
+    ax: plt.Axes
+    fig, ax = plt.subplots(figsize=(10, 8), layout="tight")
+
+    # Period should be odd so the offset calculation is correct
+    if mean_period % 2 == 0:
+        raise ValueError(f"mean_period should be an odd number, not {mean_period}")
+
+    offset = mean_period // 2
+
+    for i, column in enumerate(data.columns):
+        ax.plot(
+            data.index.values[offset:-offset],
+            _rolling_average(data[column].values, mean_period),
+            label=f"{column.title()} Rolling Mean ({mean_period})",
+            c=f"C{i}",
+        )
+
+    if index_date:
+        locator = mdates.AutoDateLocator(minticks=3, maxticks=7)
+        formatter = mdates.ConciseDateFormatter(locator)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
+
+    ax.legend()
+    ax.set_ylim(0)
+    ax.set_ylabel("No. Vehicle Positions per Response")
+    ax.set_xlabel(data.index.name)
+    ax.set_title(title)
+
+    return fig
+
+
+def response_position_counts(conn: sqlalchemy.Connection, output_folder: pathlib.Path) -> None:
+    """Extract count of positions per response from database and plot.
+
+    Parameters
+    ----------
+    conn : sqlalchemy.Connection
+        Database connection to extract from.
+    output_folder : pathlib.Path
+        Folder to output files to, creates 2 new files:
+        "response_positions_summary.csv", "response_positions_summary.pdf".
+    """
+    counts = _load_response_positions_counts(conn)
+    out_file = output_folder / "response_positions_summary.csv"
+    counts.to_csv(out_file)
+    LOG.info("Written: %s", out_file)
+
+    base_title = (
+        "Comparing the Vehicle Positions Provided per Response\n"
+        "Including Rows with Difference from Response Time {delay} minutes"
+    )
+    mean_period = 21
+
+    out_file = out_file.with_suffix(".pdf")
+    with backend_pdf.PdfPages(out_file) as pdf:
+        fig = _plot_response_positions_counts(
+            counts.groupby(level="Response Time").sum(),
+            "Comparing the Vehicle Positions Provided per Response\nIncluding All Rows",
+            mean_period=mean_period,
+            index_date=True,
+        )
+        pdf.savefig(fig)
+        plt.close(fig)
+
+        for name in counts.index.get_level_values("Delay (mins)").unique():
+            fig = _plot_response_positions_counts(
+                counts.loc[name],
+                base_title.format(delay=name),
+                mean_period=mean_period,
+                index_date=True,
+            )
+            pdf.savefig(fig)
+            plt.close(fig)
+
+    LOG.info("Written: %s", out_file)
+
+
 def main(parameters: SummaryConfig, output_folder: pathlib.Path):
     db_path = parameters.avl_output_folder / "gtfs-rt.sqlite"
     log_file = parameters.avl_output_folder / "AVL_downloader.log"
@@ -562,6 +738,8 @@ def main(parameters: SummaryConfig, output_folder: pathlib.Path):
 
     summaries: dict[str, pd.DataFrame] = {}
     with gtfs_db.connect() as conn:
+        response_position_counts(conn, output_folder)
+
         metadata = _load_metadata(conn, *parameters.metadata_ids)
         summaries["Metadata"] = metadata.describe(datetime_is_numeric=True, include="all").T
         del metadata
