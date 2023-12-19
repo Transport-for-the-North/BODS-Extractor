@@ -133,9 +133,8 @@ def _download_iterator(timings: DownloadTime) -> Iterator[int]:
     int
         Iterator count.
     """
-    end = dt.datetime.now() + dt.timedelta(
-        days=timings.days, hours=timings.hours, minutes=timings.minutes
-    )
+    start = dt.datetime.now()
+    end = start + dt.timedelta(days=timings.days, hours=timings.hours, minutes=timings.minutes)
     LOG.info(
         "Starting continuous downloads approximately "
         "every %s minute(s), which will finish at %s",
@@ -144,9 +143,17 @@ def _download_iterator(timings: DownloadTime) -> Iterator[int]:
     )
 
     count = 0
-    while dt.datetime.now() < end:
+    while True:
         count += 1
         yield count
+
+        if dt.datetime.now() >= end:
+            LOG.info(
+                "%s complete, finished continuous downloads after %s",
+                count,
+                _readable_timedelta(dt.datetime.now() - start),
+            )
+            break
 
         LOG.info(
             "%s complete, waiting %s minute(s). Total time remaining %s",

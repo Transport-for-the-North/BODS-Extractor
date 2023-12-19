@@ -36,6 +36,7 @@ _SQLALCHEMY_TYPE_LOOKUP = {
     "vehiclestopstatus": types.Enum(gtfs.VehicleStopStatus),
     "congestionlevel": types.Enum(gtfs.CongestionLevel),
     "occupancystatus": types.Enum(gtfs.OccupancyStatus),
+    "wheelchairaccessible": types.Enum(gtfs.WheelchairAccessible),
 }
 
 
