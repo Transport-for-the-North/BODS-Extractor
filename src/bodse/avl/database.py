@@ -264,7 +264,9 @@ class GTFSRTDatabase(_Database):
             *columns_from_class(
                 gtfs.VehiclePosition, exclude_fields=self._excludes.get("vehicle_position")
             ),
-            sqlalchemy.Column("identifier_hash", types.String, nullable=False, unique=True),
+            sqlalchemy.Column(
+                "identifier_hash", types.VARCHAR(64), nullable=False, unique=True
+            ),
         )
         self._position_hashes: set[str] = set()
 
