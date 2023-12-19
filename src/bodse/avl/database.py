@@ -8,6 +8,7 @@ import collections
 import logging
 import pathlib
 import re
+import sys
 from typing import Any, Optional, Protocol
 
 # Third party imports
@@ -200,6 +201,9 @@ class GTFSRTDatabase(_Database):
         "vehicle_position": {"feed_id", "trip", "vehicle", "position"},
     }
 
+    # Maximum size of the position hashes set, set is cleared when above this
+    _MAX_POSITION_HASHES_SET_SIZE = 10_000_000
+
     def _init_tables(self) -> None:
         # inherited docstring
         id_column = sqlalchemy.Column("id", types.Integer, primary_key=True)
@@ -366,8 +370,20 @@ class GTFSRTDatabase(_Database):
             row_count += self._insert_positions(conn, meta_id, position)
         LOG.debug("Inserted %s new rows into the database", row_count)
 
+        if sys.getsizeof(self._position_hashes) > self._MAX_POSITION_HASHES_SET_SIZE:
+            LOG.debug(
+                "Clearing position hashes set, current length %s and size %sKB",
+                f"{len(self._position_hashes):,}",
+                f"{sys.getsizeof(self._position_hashes):,.0f}",
+            )
+            self._position_hashes.clear()
+
         for _ in feed.alerts:
             raise NotImplementedError("functionality for storing alerts in the database")
+
+    def delete_duplicate_positions(self) -> None:
+        # TODO(MB) Delete duplicate rows from gtfs_rt_vehicle_positions table using identifier_hash column
+        raise NotImplementedError("WIP!")
 
     def create_indices(self) -> None:
         # TODO(MB) Add indices to database to speed up future queries
