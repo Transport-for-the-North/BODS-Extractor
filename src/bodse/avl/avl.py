@@ -146,6 +146,7 @@ def _download_iterator(timings: DownloadTime) -> Iterator[int]:
     count = 0
     while True:
         count += 1
+        prev_time = dt.datetime.now()
         yield count
 
         if dt.datetime.now() >= end:
@@ -156,13 +157,23 @@ def _download_iterator(timings: DownloadTime) -> Iterator[int]:
             )
             break
 
-        LOG.info(
-            "%s complete, waiting %s minute(s). Total time remaining %s",
+        time_taken = dt.datetime.now() - prev_time
+        remaining_wait = (timings.wait_minutes * 60) - time_taken.total_seconds()
+        message_args = [
             count,
-            timings.wait_minutes,
+            _readable_timedelta(time_taken),
+            _readable_timedelta(dt.timedelta(seconds=abs(remaining_wait))),
             _readable_timedelta(end - dt.datetime.now()),
-        )
-        time.sleep(timings.wait_minutes * 60)
+        ]
+
+        if remaining_wait < 0:
+            LOG.info(
+                "%s complete in %s, overran by %s so not waiting. Total time remaining %s",
+                *message_args,
+            )
+        else:
+            LOG.info("%s complete in %s, waiting %s. Total time remaining %s", *message_args)
+            time.sleep(abs(remaining_wait))
 
 
 def main(params: DownloaderConfig):
