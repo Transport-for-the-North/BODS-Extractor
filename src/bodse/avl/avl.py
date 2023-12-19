@@ -59,6 +59,7 @@ class DownloadTime:
 
 class DownloaderConfig(config_base.BaseConfig):
     output_folder: types.DirectoryPath
+    # TODO(MB) Allow this to be file path or API auth class
     api_auth_config: types.FilePath
     download_time: DownloadTime
 

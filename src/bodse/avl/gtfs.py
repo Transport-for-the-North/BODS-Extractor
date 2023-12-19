@@ -6,6 +6,7 @@ from __future__ import annotations
 import abc
 import datetime as dt
 import enum
+import hashlib
 import logging
 from typing import Any, Optional
 from urllib import parse
@@ -93,6 +94,23 @@ class _GTFSEntity(abc.ABC):
         """List of data fields."""
         # Added by dataclass decorator pylint: disable=no-member
         return list(cls.__dataclass_fields__.values())
+
+    def sha256(self, field_names: Optional[list[str]] = None) -> str:
+        """Generate hexadecimal SHA256 hash for the object."""
+        if field_names is None:
+            field_names = [i.name for i in self.get_fields()]
+
+        encoding = "utf-8"
+        m = hashlib.sha256()
+
+        for name in field_names:
+            value = getattr(self, name)
+            if isinstance(value, _GTFSEntity):
+                m.update(bytes(value.sha256(), encoding))
+            else:
+                m.update(bytes(str(value), encoding))
+
+        return m.hexdigest()
 
 
 class Incrementality(enum.IntEnum):

@@ -260,7 +260,9 @@ class GTFSRTDatabase(_Database):
             *columns_from_class(
                 gtfs.VehiclePosition, exclude_fields=self._excludes.get("vehicle_position")
             ),
+            sqlalchemy.Column("identifier_hash", types.String, nullable=False, unique=True),
         )
+        self._position_hashes: set[str] = set()
 
         self._alerts_table = NotImplemented
 
@@ -279,23 +281,51 @@ class GTFSRTDatabase(_Database):
 
     def _insert_positions(
         self, conn: sqlalchemy.Connection, metadata_id: int, position: gtfs.VehiclePosition
-    ) -> None:
+    ) -> int:
         """Insert vehicle position data into `_positions_table`.
 
         This executes the query but does not commit.
         """
-        stmt = self._positions_table.insert().values(
-            metadata_id=metadata_id,
-            feed_id=position.feed_id,
-            **values_from_class(position.trip),
-            **values_from_class(position.vehicle, prefix=self._prefixes["vehicle_descriptor"]),
-            **values_from_class(position.position),
-            **values_from_class(
-                position, exclude_fields=self._excludes.get("vehicle_position")
-            ),
+        position_hash_fields = [
+            "trip",
+            "vehicle",
+            "position",
+            "current_stop_sequence",
+            "stop_id",
+            "current_status",
+            "timestamp",
+            "position_delay_seconds",
+            "congestion_level",
+            "occupancy_status",
+            "is_deleted",
+        ]
+        identifier_hash = position.sha256(position_hash_fields)
+
+        # Don't add identifiers which have already been added
+        if identifier_hash in self._position_hashes:
+            return 0
+
+        stmt = (
+            self._positions_table.insert()
+            .values(
+                metadata_id=metadata_id,
+                feed_id=position.feed_id,
+                **values_from_class(position.trip),
+                **values_from_class(
+                    position.vehicle, prefix=self._prefixes["vehicle_descriptor"]
+                ),
+                **values_from_class(position.position),
+                **values_from_class(
+                    position, exclude_fields=self._excludes.get("vehicle_position")
+                ),
+                identifier_hash=identifier_hash,
+            )
+            .prefix_with("OR IGNORE")
         )
 
-        conn.execute(stmt)
+        res = conn.execute(stmt)
+        self._position_hashes.add(identifier_hash)
+        return res.rowcount
 
     def insert_feed(self, conn: sqlalchemy.Connection, feed: gtfs.FeedMessage) -> None:
         """Insert data from GTFS-rt feed into database.
@@ -331,16 +361,18 @@ class GTFSRTDatabase(_Database):
             raise NotImplementedError("functionality for storing trip updates in the database")
 
         LOG.info("Inserting %s positions into database", len(feed.positions))
+        row_count = 0
         for position in feed.positions:
-            self._insert_positions(conn, meta_id, position)
+            row_count += self._insert_positions(conn, meta_id, position)
+        LOG.debug("Inserted %s new rows into the database", row_count)
 
         for _ in feed.alerts:
             raise NotImplementedError("functionality for storing alerts in the database")
 
-
     def create_indices(self) -> None:
         # TODO(MB) Add indices to database to speed up future queries
         raise NotImplementedError("WIP!")
+
 
 class _DataStorage(Protocol):
     @classmethod
