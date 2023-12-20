@@ -497,7 +497,9 @@ class VehiclePosition(_GTFSEntity):
         )
 
         if response_timestamp is not None and "timestamp" in optional_fields:
-            timestamp: dt.datetime = optional_fields["timestamp"]
+            timestamp: dt.datetime = dt.datetime.fromtimestamp(
+                optional_fields["timestamp"], dt.timezone.utc
+            )
             delay = (response_timestamp - timestamp).total_seconds()
         else:
             delay = None
@@ -555,7 +557,7 @@ class FeedMessage:
             if entity.HasField(cls._position_field):
                 positions.append(
                     VehiclePosition.from_gtfs(
-                        id_, getattr(entity, cls._position_field), is_deleted
+                        id_, getattr(entity, cls._position_field), is_deleted, header.timestamp
                     )
                 )
 

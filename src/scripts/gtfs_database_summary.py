@@ -52,6 +52,7 @@ class _InsertTimeColumns:
     COMPLETE_TIME = "complete_time"
     TIME_TAKEN = "time_taken_seconds"
     POSITIONS = "response_positions_count"
+    RESPONSE_POSITIONS = "count_positions_in_response_data"
     CUMM_POSITIONS = "cummulative_positions_count"
     OUTLIER = "outlier_mask"
 
@@ -307,6 +308,38 @@ def _compare_timestamps(
     LOG.info("Written: %s", out_path)
 
 
+def _extract_total_seconds(text: str) -> int:
+    r"""Parse time taken `text` and calculate total seconds.
+
+    Parameters
+    ----------
+    text : str
+        Expected to contain any number of time groups
+        in the format "\d+ (hrs|mins|secs)" e.g.
+        "12 mins, 30 secs".
+    """
+    time_groups = re.findall(r"(\d+)\s?(hrs|mins|secs)", text, re.I)
+
+    if len(time_groups) == 0:
+        raise ValueError(f"text doesn't contain time in correct format: '{text}'")
+
+    total_seconds = 0
+    for value, units in time_groups:
+        value = int(value)
+        units = units.lower().strip()
+
+        if units == "secs":
+            total_seconds += value
+        elif units == "mins":
+            total_seconds += value * 60
+        elif units == "hrs":
+            total_seconds += value * 3600
+        else:
+            raise ValueError(f"unexpected units '{units}'")
+
+    return total_seconds
+
+
 def _extract_insert_timings(
     log_file: pathlib.Path, output_folder: pathlib.Path, sd_filter: float = 2
 ) -> tuple[pd.DataFrame, pathlib.Path]:
@@ -341,8 +374,11 @@ def _extract_insert_timings(
     datetime_format = "%d-%m-%Y %H:%M:%S"
 
     id_pattern = re.compile(r"^\s*Inserting feed into database with ID: (\d+).*$")
-    insert_pattern = re.compile(r"^\s*inserting (\d+) positions.*$", re.I)
-    complete_pattern = re.compile(r"^\s*(\d+) complete.*$", re.I)
+    inserting_pattern = re.compile(r"^\s*inserting (\d+) positions.*$", re.I)
+    inserted_pattern = re.compile(r"^\s*inserted (\d+) new rows into the database.*$", re.I)
+    complete_pattern = re.compile(
+        r"^\s*(\d+) complete(?: in ((?:\d+\s?(?:hrs|mins|secs)(?:,\s)?)+)).*$", re.I
+    )
 
     data: list[dict] = []
     row: dict[str, Any] = {}
@@ -353,20 +389,27 @@ def _extract_insert_timings(
             if line_match is None:
                 continue
 
-            if line_match.group("level").lower().strip() != "info":
+            level = line_match.group("level").lower().strip()
+            if level == "info":
+                id_match = id_pattern.match(line_match.group("message"))
+                if id_match is not None:
+                    row[_InsertTimeColumns.ID] = int(id_match.group(1))
+                    continue
+
+                inserting_match = inserting_pattern.match(line_match.group("message"))
+                if inserting_match is not None:
+                    row[_InsertTimeColumns.INSERT_TIME] = dt.datetime.strptime(
+                        line_match.group("datetime"), datetime_format
+                    )
+                    row[_InsertTimeColumns.RESPONSE_POSITIONS] = int(inserting_match.group(1))
+                    continue
+
+            elif level != "debug":
                 continue
 
-            id_match = id_pattern.match(line_match.group("message"))
-            if id_match is not None:
-                row[_InsertTimeColumns.ID] = int(id_match.group(1))
-                continue
-
-            insert_match = insert_pattern.match(line_match.group("message"))
-            if insert_match is not None:
-                row[_InsertTimeColumns.INSERT_TIME] = dt.datetime.strptime(
-                    line_match.group("datetime"), datetime_format
-                )
-                row[_InsertTimeColumns.POSITIONS] = int(insert_match.group(1))
+            inserted_match = inserted_pattern.match(line_match.group("message"))
+            if inserted_match is not None:
+                row[_InsertTimeColumns.POSITIONS] = int(inserted_match.group(1))
                 continue
 
             complete_match = complete_pattern.match(line_match.group("message"))
@@ -375,17 +418,9 @@ def _extract_insert_timings(
                 row[_InsertTimeColumns.COMPLETE_TIME] = dt.datetime.strptime(
                     line_match.group("datetime"), datetime_format
                 )
-
-                try:
-                    row[_InsertTimeColumns.TIME_TAKEN] = (
-                        row[_InsertTimeColumns.COMPLETE_TIME]
-                        - row[_InsertTimeColumns.INSERT_TIME]
-                    ).total_seconds()
-                except KeyError as exc:
-                    warnings.warn(
-                        "insert time taken cannot be calculated because some values "
-                        f"are missing ({exc}), incomplete row will be included in data"
-                    )
+                row[_InsertTimeColumns.TIME_TAKEN] = _extract_total_seconds(
+                    complete_match.group(2)
+                )
 
                 data.append(row)
                 row = {}
@@ -507,7 +542,7 @@ def _plot_insert_timings(timings: pd.DataFrame, output_file: pathlib.Path) -> No
     LOG.info("Plotting insert timings")
     timings = timings.loc[~timings[_InsertTimeColumns.OUTLIER]]
 
-    period = 21
+    period = 21 if len(timings) > 100 else 3
     ylabel = "Insert Time Taken (seconds)"
 
     plot_parameters = (
@@ -536,7 +571,7 @@ def _plot_insert_timings(timings: pd.DataFrame, output_file: pathlib.Path) -> No
             timings[_InsertTimeColumns.POSITIONS].values,
             period,
             "Insert Time",
-            "No. Positions in Response",
+            "No. Positions Inserted into Database",
             "AVL Count of Positions in Response Over Time",
             xdata_date=True,
         )
@@ -696,7 +731,7 @@ def response_position_counts(conn: sqlalchemy.Connection, output_folder: pathlib
         "Comparing the Vehicle Positions Provided per Response\n"
         "Including Rows with Difference from Response Time {delay} minutes"
     )
-    mean_period = 21
+    mean_period = 21 if len(counts) > 100 else 3
 
     out_file = out_file.with_suffix(".pdf")
     with backend_pdf.PdfPages(out_file) as pdf:

@@ -376,7 +376,7 @@ class GTFSRTDatabase(_Database):
             LOG.debug(
                 "Clearing position hashes set, current length %s and size %sKB",
                 f"{len(self._position_hashes):,}",
-                f"{sys.getsizeof(self._position_hashes):,.0f}",
+                f"{sys.getsizeof(self._position_hashes) / 1000:,.0f}",
             )
             self._position_hashes.clear()
 
