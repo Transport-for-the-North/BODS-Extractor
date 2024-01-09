@@ -298,7 +298,6 @@ class GTFSRTDatabase(_Database):
             "stop_id",
             "current_status",
             "timestamp",
-            "position_delay_seconds",
             "congestion_level",
             "occupancy_status",
             "is_deleted",
