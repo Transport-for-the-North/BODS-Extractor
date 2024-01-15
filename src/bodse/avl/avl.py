@@ -184,3 +184,6 @@ def main(params: DownloaderConfig):
         with gtfs_db.connect() as conn:
             gtfs_db.delete_duplicate_positions(conn)
             conn.commit()
+
+            gtfs_db.fill_vehicle_speeds_table(conn)
+            conn.commit()

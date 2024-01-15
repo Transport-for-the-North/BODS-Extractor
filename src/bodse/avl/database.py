@@ -191,6 +191,7 @@ class GTFSRTDatabase(_Database):
     _metadata_table_name = "gtfs_rt_meta"
     _trip_table_name = "gtfs_rt_trip_updates"
     _positions_table_name = "gtfs_rt_vehicle_positions"
+    _speeds_table_name = "gtfs_rt_vehicle_speed_estimates"
 
     _prefixes = collections.defaultdict(
         lambda: "",
@@ -270,6 +271,31 @@ class GTFSRTDatabase(_Database):
             sqlalchemy.Column("identifier_hash", types.VARCHAR(64), nullable=False),
         )
         self._position_hashes: set[str] = set()
+
+        self._speeds_table = sqlalchemy.Table(
+            self._speeds_table_name,
+            self._metadata,
+            sqlalchemy.Column(
+                "position_id",
+                types.Integer,
+                sqlalchemy.ForeignKey(f"{self._positions_table_name}.id"),
+                nullable=False,
+                index=True,
+                unique=True,
+            ),
+            sqlalchemy.Column("trip_id", types.String, nullable=False),
+            sqlalchemy.Column("current_stop_sequence", types.Integer, nullable=False),
+            sqlalchemy.Column("timestamp", types.DateTime, nullable=False),
+            sqlalchemy.Column("current_status", _SQLALCHEMY_TYPE_LOOKUP["vehiclestopstatus"]),
+            sqlalchemy.Column("easting", types.Float, nullable=False),
+            sqlalchemy.Column("northing", types.Float, nullable=False),
+            sqlalchemy.Column("prev_easting", types.Float),
+            sqlalchemy.Column("prev_northing", types.Float),
+            sqlalchemy.Column("prev_time", types.DateTime),
+            sqlalchemy.Column("distance_metres", types.Float),
+            sqlalchemy.Column("delta_time_seconds", types.Float),
+            sqlalchemy.Column("speed_ms", types.Float),
+        )
 
         self._alerts_table = NotImplemented
 
@@ -390,7 +416,7 @@ class GTFSRTDatabase(_Database):
         start = time.perf_counter()
 
         stmt = sql.text(
-            rf"""
+            f"""
             DELETE FROM {table} WHERE ROWID NOT IN
                 (
                 SELECT min(ROWID) FROM {table}
@@ -407,7 +433,87 @@ class GTFSRTDatabase(_Database):
             utils.readable_seconds(round(time.perf_counter() - start)),
         )
 
-    def create_indices(self) -> None:
+    def fill_vehicle_speeds_table(self, conn: sqlalchemy.Connection) -> None:
+        """Calculate vehicle speeds based and fill in new database table.
+
+        Speeds are calculated based on crow-fly distance from previous
+        position and the position timestamps.
+        """
+        LOG.info(
+            "Creating index on '%s' for trip_id, current_stop_sequence, timestamp",
+            self._positions_table,
+        )
+        start = time.perf_counter()
+        trip_index = sql.text(
+            "CREATE INDEX IF NOT EXISTS"
+            f" ix_{self._positions_table}_trip_id_current_stop"
+            f" ON {self._positions_table}"
+            " (trip_id, current_stop_sequence, timestamp)"
+        )
+        conn.execute(trip_index)
+        LOG.info(
+            "Index create in %s", utils.readable_seconds(int(time.perf_counter() - start))
+        )
+
+        LOG.info(
+            "Calculating vehicle speeds and filling '%s', this may take some time",
+            self._speeds_table,
+        )
+        start = time.perf_counter()
+        previous_position_stmt = f"""
+            -- Get easting / northing from the previous vehicle position
+            SELECT
+                id,
+                trip_id,
+                current_stop_sequence,
+                timestamp,
+                current_status,
+                easting,
+                northing,
+                lag (easting) OVER ordered_trip prev_easting,
+                lag (northing) OVER ordered_trip prev_northing,
+                lag (timestamp) OVER ordered_trip prev_time
+
+            FROM {self._positions_table}
+
+            WHERE trip_id IS NOT NULL
+
+            WINDOW ordered_trip AS (
+                PARTITION BY trip_id, date(timestamp)
+                    ORDER BY current_stop_sequence, timestamp
+            )
+        """
+        select_stmt = f"""
+            SELECT *, distance_metres / delta_time_seconds AS speed_ms
+
+            FROM (
+                -- Calculate distance and time from previous row
+                SELECT
+                    *,
+                    sqrt(
+                        pow(easting - prev_easting, 2) + pow(northing - prev_northing, 2)
+                    ) AS distance_metres,
+                    unixepoch (timestamp) - unixepoch (prev_time) AS delta_time_seconds
+
+                FROM (
+                    {previous_position_stmt}
+                )
+            )
+
+            ORDER BY trip_id, current_stop_sequence, timestamp;
+        """
+
+        insert_stmt = sql.text(
+            f"INSERT OR REPLACE INTO {self._speeds_table_name}\n{select_stmt}"
+        )
+        result = conn.execute(insert_stmt)
+        LOG.info(
+            "Filled %s rows in speeds table in %s",
+            result.rowcount,
+            utils.readable_seconds(int(time.perf_counter() - start)),
+        )
+
+    def create_positions_indices(self, conn: sqlalchemy.Connection) -> None:
         # TODO(MB) Add indices to database to speed up future queries
         raise NotImplementedError("WIP!")
 
