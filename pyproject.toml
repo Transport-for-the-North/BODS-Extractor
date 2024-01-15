@@ -35,3 +35,15 @@ match = '(?!_test)(?!test_)(?!__init__).*\.py'
 add-ignore = [
     "D202",    # Temporary compatibility with black
 ]
+
+[tool.isort]
+profile = "black"
+src_paths = ["src", "tests"]
+
+skip = ["__init__.py", "_version.py"]
+skip_glob = [".*"]
+
+# Section commenting
+import_heading_stdlib = "Built-Ins"
+import_heading_thirdparty = "Third Party"
+import_heading_firstparty = "Local Imports"

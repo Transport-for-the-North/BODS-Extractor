@@ -2,22 +2,25 @@
 """Functionality for storing / retrieving AVL data from a database."""
 
 ##### IMPORTS #####
-# Standard imports
+
+# Built-Ins
 import abc
 import collections
 import logging
 import pathlib
 import re
 import sys
+import time
 from typing import Any, Optional, Protocol
 
-# Third party imports
-from pydantic import fields
+# Third Party
 import sqlalchemy
-from sqlalchemy import types
+from pydantic import fields
+from sqlalchemy import sql, types
 
-# Local imports
-from bodse.avl import raw, gtfs
+# Local Imports
+from bodse import utils
+from bodse.avl import gtfs, raw
 
 ##### CONSTANTS #####
 LOG = logging.getLogger(__name__)
@@ -338,7 +341,7 @@ class GTFSRTDatabase(_Database):
         Parameters
         ----------
         conn : sqlalchemy.Connection
-            Connection to SQLite database.
+            Connection to database.
         feed : gtfs.FeedMessage
             GTFS-rt feed message data.
 
@@ -380,9 +383,29 @@ class GTFSRTDatabase(_Database):
         for _ in feed.alerts:
             raise NotImplementedError("functionality for storing alerts in the database")
 
-    def delete_duplicate_positions(self) -> None:
-        # TODO(MB) Delete duplicate rows from gtfs_rt_vehicle_positions table using identifier_hash column
-        raise NotImplementedError("WIP!")
+    def delete_duplicate_positions(self, conn: sqlalchemy.Connection) -> None:
+        """Delete duplicate rows from positions table based on 'identifier_hash' column."""
+        table = self._positions_table_name
+        LOG.info("Deleting duplicate rows from '%s' table, this may take a few minutes", table)
+        start = time.perf_counter()
+
+        stmt = sql.text(
+            rf"""
+            DELETE FROM {table} WHERE ROWID NOT IN
+                (
+                SELECT min(ROWID) FROM {table}
+                GROUP BY identifier_hash
+                );
+            """
+        )
+        res = conn.execute(stmt)
+
+        LOG.info(
+            "Deleted %s duplicate rows from '%s' table, query took %s",
+            res.rowcount,
+            table,
+            utils.readable_seconds(round(time.perf_counter() - start)),
+        )
 
     def create_indices(self) -> None:
         # TODO(MB) Add indices to database to speed up future queries

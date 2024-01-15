@@ -2,7 +2,8 @@
 """Functionality for downloading and processing BODS AVL data."""
 
 ##### IMPORTS #####
-# Standard imports
+
+# Built-Ins
 import datetime as dt
 import logging
 import pathlib
@@ -10,17 +11,16 @@ import time
 from typing import Iterator
 from urllib import parse
 
-# Third party imports
-from caf.toolkit import log_helpers, config_base
-from pydantic import dataclasses, types
+# Third Party
 import pydantic
 import requests
+from caf.toolkit import config_base, log_helpers
+from pydantic import dataclasses, types
 
-# Local imports
-from bodse import request
+# Local Imports
 import bodse
-from bodse.avl import gtfs, raw, database
-
+from bodse import request, utils
+from bodse.avl import database, gtfs, raw
 
 ##### CONSTANTS #####
 LOG = logging.getLogger(__name__)
@@ -94,33 +94,6 @@ def store_raw(avl_database: database.RawAVLDatabase, auth: request.APIAuth):
         connection.commit()
 
 
-def _readable_timedelta(delta: dt.timedelta) -> str:
-    """Convert to readable string with varying resolution.
-
-    String contains only the largest 2 units from days, hours,
-    minutes and seconds e.g. "3 days, 2 hrs", "10 hrs, 16 mins"
-    or "37 mins, 42 secs".
-    """
-    readable = []
-    if delta.days > 0:
-        readable.append(f"{delta.days:,} days")
-
-    if delta.seconds > 0:
-        minutes, seconds = divmod(delta.seconds, 60)
-        hours, minutes = divmod(minutes, 60)
-
-        if hours > 0:
-            readable.append(f"{hours} hrs")
-
-        if minutes > 0 and delta.days == 0:
-            readable.append(f"{minutes} mins")
-
-        if seconds > 0 and hours == 0:
-            readable.append(f"{seconds} secs")
-
-    return ", ".join(readable)
-
-
 def _download_iterator(timings: DownloadTime) -> Iterator[int]:
     """Yield every `wait_time` seconds until end time.
 
@@ -153,7 +126,7 @@ def _download_iterator(timings: DownloadTime) -> Iterator[int]:
             LOG.info(
                 "%s complete, finished continuous downloads after %s",
                 count,
-                _readable_timedelta(dt.datetime.now() - start),
+                utils.readable_timedelta(dt.datetime.now() - start),
             )
             break
 
@@ -161,9 +134,9 @@ def _download_iterator(timings: DownloadTime) -> Iterator[int]:
         remaining_wait = (timings.wait_minutes * 60) - time_taken.total_seconds()
         message_args = [
             count,
-            _readable_timedelta(time_taken),
-            _readable_timedelta(dt.timedelta(seconds=abs(remaining_wait))),
-            _readable_timedelta(end - dt.datetime.now()),
+            utils.readable_timedelta(time_taken),
+            utils.readable_timedelta(dt.timedelta(seconds=abs(remaining_wait))),
+            utils.readable_timedelta(end - dt.datetime.now()),
         ]
 
         if remaining_wait < 0:
@@ -206,3 +179,8 @@ def main(params: DownloaderConfig):
                 conn.commit()
 
         LOG.info("Finished downloading AVL data")
+
+        LOG.info("Tidying up AVL database tables")
+        with gtfs_db.connect() as conn:
+            gtfs_db.delete_duplicate_positions(conn)
+            conn.commit()
