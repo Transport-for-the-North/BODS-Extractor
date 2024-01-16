@@ -12,6 +12,7 @@ import re
 import sys
 import time
 from typing import Any, Optional, Protocol
+import pandas as pd
 
 # Third Party
 import sqlalchemy
@@ -192,6 +193,7 @@ class GTFSRTDatabase(_Database):
     _trip_table_name = "gtfs_rt_trip_updates"
     _positions_table_name = "gtfs_rt_vehicle_positions"
     _speeds_table_name = "gtfs_rt_vehicle_speed_estimates"
+    _stop_times_table_name = "gtfs_stop_times"
 
     _prefixes = collections.defaultdict(
         lambda: "",
@@ -518,6 +520,68 @@ class GTFSRTDatabase(_Database):
     def create_positions_indices(self, conn: sqlalchemy.Connection) -> None:
         # TODO(MB) Add indices to database to speed up future queries
         raise NotImplementedError("WIP!")
+
+    def _create_stop_times_table(self, conn: sqlalchemy.Connection) -> sqlalchemy.Table:
+        """Create table to store GTFS stop times information."""
+        name = self._stop_times_table_name
+        stops_table = sqlalchemy.Table(
+            name,
+            self._metadata,
+            sqlalchemy.Column("trip_id", types.String, nullable=False),
+            sqlalchemy.Column("arrival_time", types.DateTime, nullable=False),
+            sqlalchemy.Column("departure_time", types.DateTime, nullable=False),
+            sqlalchemy.Column("stop_id", types.String, nullable=False),
+            sqlalchemy.Column("stop_sequence", types.Integer, nullable=False),
+            sqlalchemy.Column("stop_headsign", types.String),
+            sqlalchemy.Column("pickup_type", types.Integer),
+            sqlalchemy.Column("drop_off_type", types.Integer),
+            sqlalchemy.Column("shape_dist_traveled", types.Float),
+            sqlalchemy.Column("timepoint", types.Integer),
+            sqlalchemy.Column("stop_direction_name", types.String),
+            sqlalchemy.Column("stop_east", types.Float),
+            sqlalchemy.Column("stop_north", types.Float),
+        )
+
+        stops_table.create(bind=conn, checkfirst=True)
+
+        index_stmt = sql.text(
+            f"CREATE INDEX IF NOT EXISTS ix_{name}_trip_id_stop_sequence"
+            f" ON {name} (trip_id, stop_sequence)"
+        )
+        conn.execute(index_stmt)
+
+        return stops_table
+
+    def insert_stop_times(self, conn: sqlalchemy.Connection, stop_times: pd.DataFrame) -> None:
+        """Insert GTFS stop times data into database.
+
+        Parameters
+        ----------
+        stop_times : pd.DataFrame
+            Stop times data as defined in
+            [GTFS spec](https://gtfs.org/schedule/reference/#stop_timestxt)
+            with 'stop_east' and 'stop_north' columns appended containing
+            the BNG easting and northing values respectively.
+        """
+        table = self._create_stop_times_table(conn)
+
+        # Clear rows before inserting new ones
+        stmt = table.delete()
+        result = conn.execute(stmt)
+        LOG.info("Cleared %s table, removed %s rows", table.name, result.rowcount)
+
+        LOG.info(
+            "Inserting stop times (%s rows) into AVL database table %s",
+            f"{len(stop_times):,}",
+            table.name,
+        )
+        start = time.perf_counter()
+        rowcount = stop_times.to_sql(table.name, conn, index=False, if_exists="append")
+        LOG.info(
+            "Inserted %s rows in %s",
+            f"{rowcount:,}",
+            utils.readable_seconds(int(time.perf_counter() - start)),
+        )
 
 
 class _DataStorage(Protocol):

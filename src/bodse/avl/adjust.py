@@ -4,17 +4,19 @@
 ##### IMPORTS #####
 
 # Built-Ins
-import dataclasses
 import logging
 import pathlib
 import zipfile
 
 # Third Party
 import pandas as pd
+from caf.toolkit import config_base, log_helpers
+from pydantic import dataclasses, types
 
 # Local Imports
 from bodse import utils
-from bodse.avl import gtfs
+import bodse
+from bodse.avl import database, gtfs
 
 ##### CONSTANTS #####
 
@@ -50,7 +52,7 @@ _GTFS_FILE_COLUMNS: dict[str, dict[str, type]] = {
 ##### CLASSES & FUNCTIONS #####
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(config={"arbitrary_types_allowed": True})
 class _GTFSStops:
     """GTFS schedule stops and stop time data."""
 
@@ -141,3 +143,28 @@ def extract_stop_times_locations(gtfs_path: pathlib.Path) -> pd.DataFrame:
     stop_times.drop(columns="_merge", inplace=True)
 
     return stop_times
+
+
+class AdjustConfig(config_base.BaseConfig):
+    avl_database: types.FilePath
+    gtfs_file: types.FilePath
+    output_folder: types.DirectoryPath
+
+
+def main(parameters: AdjustConfig) -> None:
+    tool_details = log_helpers.ToolDetails(bodse.__package__, bodse.__version__)
+
+    output_folder = parameters.output_folder
+    log_file = output_folder / "AVL_delay.log"
+
+    with log_helpers.LogHelper(bodse.__package__, tool_details, log_file=log_file):
+        LOG.debug("AVL downloader parameters:\n%s", parameters.to_yaml())
+        LOG.info("Outputs saved to: %s", output_folder)
+
+        stop_times = extract_stop_times_locations(parameters.gtfs_file)
+
+        gtfs_db = database.GTFSRTDatabase(parameters.avl_database)
+
+        with gtfs_db.connect() as conn:
+            gtfs_db.insert_stop_times(conn, stop_times)
+            conn.commit()
