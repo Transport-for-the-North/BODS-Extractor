@@ -3,20 +3,23 @@
 
 from __future__ import annotations
 
+# Built-Ins
 import abc
 import datetime as dt
 import enum
 import hashlib
 import logging
+import warnings
 from typing import Any, Optional
 from urllib import parse
-import warnings
 
+# Third Party
 import numpy as np
 import pydantic
 from google.transit import gtfs_realtime_pb2
 from pydantic import dataclasses, fields
 
+# Local Imports
 from bodse import request
 
 ##### CONSTANTS #####
@@ -32,6 +35,7 @@ _MINIMUM_TRANSFORM_ACCURACY = 5
 # easting / northing, if not given NaN's will be returned for those
 # values
 try:
+    # Third Party
     import pyproj
     from pyproj import transformer
 except ModuleNotFoundError:
@@ -400,7 +404,7 @@ class Position(_GTFSDataclass):
         mandatory = _get_fields(data, "latitude", "longitude", raise_missing=True)
         optional = _get_fields(data, "bearing", "odometer", "speed")
 
-        mandatory["easting"], mandatory["northing"] = _lat_lon_to_bng(
+        mandatory["easting"], mandatory["northing"] = lat_lon_to_bng(
             mandatory["latitude"], mandatory["longitude"]
         )
 
@@ -681,7 +685,7 @@ def download(
     return feed
 
 
-def _lat_lon_to_bng(latitude: float, longitude: float) -> tuple[float, float]:
+def lat_lon_to_bng(latitude: float, longitude: float) -> tuple[float, float]:
     """Convert latitude and longitude to easting and northing.
 
     Depenancy pyproj is required for this to work, if it isn't

@@ -500,7 +500,9 @@ class GTFSRTDatabase(_Database):
                 )
             )
 
-            ORDER BY trip_id, current_stop_sequence, timestamp;
+            -- Get the most recent position for each stop in the sequence, per day
+            GROUP BY trip_id, current_stop_sequence, date(timestamp)
+            ORDER BY trip_id, current_stop_sequence, timestamp DESC;
         """
 
         insert_stmt = sql.text(

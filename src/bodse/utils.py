@@ -4,8 +4,13 @@
 ##### IMPORTS #####
 
 # Built-Ins
+import collections
 import datetime as dt
 import logging
+
+# Third Party
+import numpy as np
+import pandas as pd
 
 ##### CONSTANTS #####
 
@@ -57,3 +62,42 @@ def readable_timedelta(delta: dt.timedelta) -> str:
         readable.append(readable_seconds(delta.seconds, delta.days == 0))
 
     return ", ".join(readable)
+
+
+def merge_indicator_check(
+    data: pd.DataFrame, left_name: str, right_name: str, indicator_column: str = "_merge"
+) -> None:
+    """Validate a pandas DataFrame merge is an inner join.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        DataFrame after merge, requires an indicator column.
+    left_name, right_name : str
+        Name of the left and right datasets, used for error message.
+    indicator_column : str, default "_merge"
+        Name of the indicator column.
+
+    Raises
+    ------
+    ValueError
+        If `indicator_column` contains values other than 'both'.
+
+    See Also
+    --------
+    pd.merge
+    """
+    merge: dict[str, int] = collections.defaultdict(
+        lambda: 0, zip(*np.unique(data[indicator_column], return_counts=True))  # type: ignore
+    )
+    if set(merge.keys()) == {"both"}:
+        return None
+
+    msg = (
+        f"{merge['both']:,} rows in both datasets\n"
+        f"{merge['left_only']:,} rows in {left_name} only\n"
+        f"{merge['right_only']:,} rows in {right_name} only\n"
+        f"{len(data)} rows in full dataset"
+    )
+
+    raise ValueError(f"merging {left_name} and {right_name} is not complete:\n{msg}")
