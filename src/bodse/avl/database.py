@@ -285,7 +285,7 @@ class GTFSRTDatabase(_Database):
                 index=True,
                 unique=True,
             ),
-            sqlalchemy.Column("trip_id", types.String, nullable=False),
+            sqlalchemy.Column("trip_id", types.String, nullable=False, index=True),
             sqlalchemy.Column("current_stop_sequence", types.Integer, nullable=False),
             sqlalchemy.Column("timestamp", types.DateTime, nullable=False),
             sqlalchemy.Column("current_status", _SQLALCHEMY_TYPE_LOOKUP["vehiclestopstatus"]),
@@ -446,15 +446,23 @@ class GTFSRTDatabase(_Database):
             self._positions_table,
         )
         start = time.perf_counter()
-        trip_index = sql.text(
-            "CREATE INDEX IF NOT EXISTS"
-            f" ix_{self._positions_table}_trip_id_current_stop"
-            f" ON {self._positions_table}"
-            " (trip_id, current_stop_sequence, timestamp)"
+
+        conn.execute(
+            sql.text(
+                "CREATE INDEX IF NOT EXISTS"
+                f" ix_{self._positions_table_name}_trip_id_current_stop"
+                f" ON {self._positions_table_name}"
+                " (trip_id, current_stop_sequence, timestamp)"
+            )
         )
-        conn.execute(trip_index)
+        conn.execute(
+            sql.text(
+                f"CREATE INDEX ix_{self._positions_table_name}_trip_id_date_timestamp"
+                f" ON {self._positions_table_name} (trip_id, date(timestamp), timestamp)"
+            )
+        )
         LOG.info(
-            "Index create in %s", utils.readable_seconds(int(time.perf_counter() - start))
+            "Index created in %s", utils.readable_seconds(int(time.perf_counter() - start))
         )
 
         LOG.info(
@@ -462,8 +470,11 @@ class GTFSRTDatabase(_Database):
             self._speeds_table,
         )
         start = time.perf_counter()
-        previous_position_stmt = f"""
+        previous_position_stmt = sql.text(
+            f"""
             -- Get easting / northing from the previous vehicle position
+            CREATE VIEW gtfs_previous_vehicle_positions AS
+
             SELECT
                 id,
                 trip_id,
@@ -476,16 +487,19 @@ class GTFSRTDatabase(_Database):
                 lag (northing) OVER ordered_trip prev_northing,
                 lag (timestamp) OVER ordered_trip prev_time
 
-            FROM {self._positions_table}
+            FROM {self._positions_table_name}
 
             WHERE trip_id IS NOT NULL
 
             WINDOW ordered_trip AS (
                 PARTITION BY trip_id, date(timestamp)
-                    ORDER BY current_stop_sequence, timestamp
+                ORDER BY timestamp
             )
-        """
-        select_stmt = f"""
+            """
+        )
+        conn.execute(previous_position_stmt)
+
+        select_stmt = """
             SELECT *, distance_metres / delta_time_seconds AS speed_ms
 
             FROM (
@@ -497,9 +511,7 @@ class GTFSRTDatabase(_Database):
                     ) AS distance_metres,
                     unixepoch (timestamp) - unixepoch (prev_time) AS delta_time_seconds
 
-                FROM (
-                    {previous_position_stmt}
-                )
+                FROM gtfs_previous_vehicle_positions
             )
 
             -- Get the most recent position for each stop in the sequence, per day
@@ -507,19 +519,14 @@ class GTFSRTDatabase(_Database):
             ORDER BY trip_id, current_stop_sequence, timestamp DESC;
         """
 
-        insert_stmt = sql.text(
-            f"INSERT OR REPLACE INTO {self._speeds_table_name}\n{select_stmt}"
+        result = conn.execute(
+            sql.text(f"INSERT OR REPLACE INTO {self._speeds_table_name}\n{select_stmt}")
         )
-        result = conn.execute(insert_stmt)
         LOG.info(
             "Filled %s rows in speeds table in %s",
             result.rowcount,
             utils.readable_seconds(int(time.perf_counter() - start)),
         )
-
-    def create_positions_indices(self, conn: sqlalchemy.Connection) -> None:
-        # TODO(MB) Add indices to database to speed up future queries
-        raise NotImplementedError("WIP!")
 
     def _create_stop_times_table(self, conn: sqlalchemy.Connection) -> sqlalchemy.Table:
         """Create table to store GTFS stop times information."""
@@ -528,8 +535,8 @@ class GTFSRTDatabase(_Database):
             name,
             self._metadata,
             sqlalchemy.Column("trip_id", types.String, nullable=False),
-            sqlalchemy.Column("arrival_time", types.DateTime, nullable=False),
-            sqlalchemy.Column("departure_time", types.DateTime, nullable=False),
+            sqlalchemy.Column("arrival_time", types.Time, nullable=False),
+            sqlalchemy.Column("departure_time", types.Time, nullable=False),
             sqlalchemy.Column("stop_id", types.String, nullable=False),
             sqlalchemy.Column("stop_sequence", types.Integer, nullable=False),
             sqlalchemy.Column("stop_headsign", types.String),
@@ -540,6 +547,9 @@ class GTFSRTDatabase(_Database):
             sqlalchemy.Column("stop_direction_name", types.String),
             sqlalchemy.Column("stop_east", types.Float),
             sqlalchemy.Column("stop_north", types.Float),
+            sqlalchemy.Column("arrival_secs", types.Integer, nullable=False),
+            sqlalchemy.Column("departure_secs", types.Integer, nullable=False),
+            sqlalchemy.Column("prev_stop_distance_metres", types.Float),
         )
 
         stops_table.create(bind=conn, checkfirst=True)
@@ -551,6 +561,47 @@ class GTFSRTDatabase(_Database):
         conn.execute(index_stmt)
 
         return stops_table
+
+    def calculate_stop_distances(self, conn: sqlalchemy.Connection) -> None:
+        """Calculate the distance to previous stops in the stop times database table.
+
+        Runs an UPDATE query which calculates the crow-fly distance between the
+        current and previous stop in the GTFS stop times schedule table.
+
+        Parameters
+        ----------
+        conn : sqlalchemy.Connection
+            Connection to the AVL SQlite database.
+        """
+        table = self._stop_times_table_name
+        stmt = sql.text(
+            f"""
+            UPDATE {table}
+                SET prev_stop_distance_metres = sqrt(
+                    pow(stop_east - d.prev_easting, 2) + pow(stop_north - d.prev_northing, 2)
+                )
+            FROM (
+                SELECT
+                    ROWID,
+                    lag (stop_east) OVER ordered_trip prev_easting,
+                    lag (stop_north) OVER ordered_trip prev_northing
+                FROM {table}
+                WINDOW ordered_trip AS (PARTITION BY trip_id ORDER BY stop_sequence)
+            ) d
+            WHERE ROWID = d.ROWID;
+            """
+        )
+
+        LOG.info("Calculating distance from previous stop, this may take some time")
+        start = time.perf_counter()
+        result = conn.execute(stmt)
+
+        LOG.debug(
+            "Updated %s rows in %s table, time taken %s",
+            f"{result.rowcount:,}",
+            table,
+            utils.readable_seconds(int(time.perf_counter() - start)),
+        )
 
     def insert_stop_times(self, conn: sqlalchemy.Connection, stop_times: pd.DataFrame) -> None:
         """Insert GTFS stop times data into database.
@@ -582,6 +633,8 @@ class GTFSRTDatabase(_Database):
             f"{rowcount:,}",
             utils.readable_seconds(int(time.perf_counter() - start)),
         )
+
+        self.calculate_stop_distances(conn)
 
 
 class _DataStorage(Protocol):

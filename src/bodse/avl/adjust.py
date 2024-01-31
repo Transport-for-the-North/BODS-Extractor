@@ -6,6 +6,7 @@
 # Built-Ins
 import logging
 import pathlib
+import re
 import zipfile
 
 # Third Party
@@ -14,8 +15,8 @@ from caf.toolkit import config_base, log_helpers
 from pydantic import dataclasses, types
 
 # Local Imports
-from bodse import utils
 import bodse
+from bodse import utils
 from bodse.avl import database, gtfs
 
 ##### CONSTANTS #####
@@ -115,19 +116,43 @@ def _translate_stop_coordinates(stops: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([stops, eastnorth], axis=1)
 
 
+def _time_seconds(time_str: str) -> int:
+    """Parse time string and convert to seconds.
+
+    Parameters
+    ----------
+    time_str : str
+        Expected format 'HH:MM:SS'.
+
+    Raises
+    ------
+    ValueError
+        If `time_str` isn't in the expected format.
+    """
+    match = re.match(r"^(\d{,2}):(\d{,2}):(\d{,2})$", time_str.strip())
+    if match is None:
+        raise ValueError(f"time format should be 'HH:MM:SS' not '{time_str}'")
+
+    groups = [int(i) for i in match.groups()]
+
+    return groups[0] * 3600 + groups[1] * 60 + groups[2]
+
+
 def extract_stop_times_locations(gtfs_path: pathlib.Path) -> pd.DataFrame:
     """Extract stop times and locations (easting / northing) from GTFS file.
 
     Translates the stop longitude and latitudes to British National Grid
     (BNG) easting and northing and appends them to the stop times table.
+    Also, calculates the arrival and departure time in seconds and appends
+    two columns containing those values.
 
     Returns
     -------
     pd.DataFrame
         Stop times data as defined in
         [GTFS spec](https://gtfs.org/schedule/reference/#stop_timestxt)
-        with 'stop_east' and 'stop_north' columns appended containing
-        the BNG easting and northing values respectively.
+        with 'stop_east', 'stop_north', 'arrival_secs' and
+        'departure_secs' columns appended.
     """
     data = _load_stop_times(gtfs_path)
     stops = _translate_stop_coordinates(data.stops)
@@ -141,6 +166,11 @@ def extract_stop_times_locations(gtfs_path: pathlib.Path) -> pd.DataFrame:
     )
     utils.merge_indicator_check(stop_times, "stop times", "stop locations")
     stop_times.drop(columns="_merge", inplace=True)
+
+    # Calculate arrival and departure time in seconds, GTFS provides arrival
+    # and departure times > 24:00:00 for routes which run across midnight
+    stop_times.loc[:, "arrival_secs"] = stop_times["arrival_time"].apply(_time_seconds)
+    stop_times.loc[:, "departure_secs"] = stop_times["departure_time"].apply(_time_seconds)
 
     return stop_times
 
