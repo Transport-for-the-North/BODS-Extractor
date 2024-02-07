@@ -10,6 +10,7 @@ import logging
 import pathlib
 import re
 import sys
+import textwrap
 import time
 from typing import Any, Optional, Protocol
 import pandas as pd
@@ -194,6 +195,7 @@ class GTFSRTDatabase(_Database):
     _positions_table_name = "gtfs_rt_vehicle_positions"
     _speeds_table_name = "gtfs_rt_vehicle_speed_estimates"
     _stop_times_table_name = "gtfs_stop_times"
+    _stop_delays_table_name = "gtfs_stop_delays"
 
     _prefixes = collections.defaultdict(
         lambda: "",
@@ -280,7 +282,7 @@ class GTFSRTDatabase(_Database):
             sqlalchemy.Column(
                 "position_id",
                 types.Integer,
-                sqlalchemy.ForeignKey(f"{self._positions_table_name}.id"),
+                sqlalchemy.ForeignKey(f"{self._positions_table_name}.id", ondelete="CASCADE"),
                 nullable=False,
                 index=True,
                 unique=True,
@@ -457,7 +459,8 @@ class GTFSRTDatabase(_Database):
         )
         conn.execute(
             sql.text(
-                f"CREATE INDEX ix_{self._positions_table_name}_trip_id_date_timestamp"
+                "CREATE INDEX IF NOT EXISTS"
+                f" ix_{self._positions_table_name}_trip_id_date_timestamp"
                 f" ON {self._positions_table_name} (trip_id, date(timestamp), timestamp)"
             )
         )
@@ -470,6 +473,7 @@ class GTFSRTDatabase(_Database):
             self._speeds_table,
         )
         start = time.perf_counter()
+        conn.execute(sql.text("DROP VIEW IF EXISTS gtfs_previous_vehicle_positions"))
         previous_position_stmt = sql.text(
             f"""
             -- Get easting / northing from the previous vehicle position
@@ -549,7 +553,7 @@ class GTFSRTDatabase(_Database):
             sqlalchemy.Column("stop_north", types.Float),
             sqlalchemy.Column("arrival_secs", types.Integer, nullable=False),
             sqlalchemy.Column("departure_secs", types.Integer, nullable=False),
-            sqlalchemy.Column("prev_stop_distance_metres", types.Float),
+            sqlalchemy.Column("stop_distance_metres", types.Float),
         )
 
         stops_table.create(bind=conn, checkfirst=True)
@@ -562,48 +566,9 @@ class GTFSRTDatabase(_Database):
 
         return stops_table
 
-    def calculate_stop_distances(self, conn: sqlalchemy.Connection) -> None:
-        """Calculate the distance to previous stops in the stop times database table.
-
-        Runs an UPDATE query which calculates the crow-fly distance between the
-        current and previous stop in the GTFS stop times schedule table.
-
-        Parameters
-        ----------
-        conn : sqlalchemy.Connection
-            Connection to the AVL SQlite database.
-        """
-        table = self._stop_times_table_name
-        stmt = sql.text(
-            f"""
-            UPDATE {table}
-                SET prev_stop_distance_metres = sqrt(
-                    pow(stop_east - d.prev_easting, 2) + pow(stop_north - d.prev_northing, 2)
-                )
-            FROM (
-                SELECT
-                    ROWID,
-                    lag (stop_east) OVER ordered_trip prev_easting,
-                    lag (stop_north) OVER ordered_trip prev_northing
-                FROM {table}
-                WINDOW ordered_trip AS (PARTITION BY trip_id ORDER BY stop_sequence)
-            ) d
-            WHERE ROWID = d.ROWID;
-            """
-        )
-
-        LOG.info("Calculating distance from previous stop, this may take some time")
-        start = time.perf_counter()
-        result = conn.execute(stmt)
-
-        LOG.debug(
-            "Updated %s rows in %s table, time taken %s",
-            f"{result.rowcount:,}",
-            table,
-            utils.readable_seconds(int(time.perf_counter() - start)),
-        )
-
-    def insert_stop_times(self, conn: sqlalchemy.Connection, stop_times: pd.DataFrame) -> None:
+    def insert_stop_times(
+        self, conn: sqlalchemy.Connection, stop_times: pd.DataFrame, overwrite: bool = False
+    ) -> None:
         """Insert GTFS stop times data into database.
 
         Parameters
@@ -613,13 +578,31 @@ class GTFSRTDatabase(_Database):
             [GTFS spec](https://gtfs.org/schedule/reference/#stop_timestxt)
             with 'stop_east' and 'stop_north' columns appended containing
             the BNG easting and northing values respectively.
+        overwrite : bool, default False
+            If True, clears the stop times table and inserts new values.
+            If False, checks if the stop times table already exists with same
+            number of rows as `stop_times` and doesn't overwrite it if that's
+            the case.
         """
+        if not overwrite:
+            result = conn.execute(
+                sql.text(f"SELECT count(*) FROM {self._stop_times_table_name}")
+            )
+            n_rows: int = result.fetchone()[0]  # type: ignore
+            if len(stop_times) == n_rows:
+                LOG.info(
+                    "Stop times table already exists with same number of rows"
+                    " (%s) as given stop times data so it is not overwritten.",
+                    f"{n_rows:,}",
+                )
+                return
+
         table = self._create_stop_times_table(conn)
 
         # Clear rows before inserting new ones
         stmt = table.delete()
         result = conn.execute(stmt)
-        LOG.info("Cleared %s table, removed %s rows", table.name, result.rowcount)
+        LOG.info("Cleared %s table, removed %s rows", table.name, f"{result.rowcount:,}")
 
         LOG.info(
             "Inserting stop times (%s rows) into AVL database table %s",
@@ -634,7 +617,205 @@ class GTFSRTDatabase(_Database):
             utils.readable_seconds(int(time.perf_counter() - start)),
         )
 
-        self.calculate_stop_distances(conn)
+    def filter_vehicle_positions(self, conn: sqlalchemy.Connection) -> None:
+        # TODO(MB) Add parameters for speed, delay and distance filters
+        LOG.info("Removing GTFS-rt vehicle positions with incorrect GPS data")
+        filter_table_name = "gtfs_position_filter"
+        stmt = sql.text(f"DROP TABLE IF EXISTS {filter_table_name}")
+        conn.execute(stmt)
+
+        stmt = sql.text(
+            f"""
+            -- Table containing positions to be dropped
+            CREATE TABLE {filter_table_name} AS
+            SELECT
+                *,
+                estimated_arrival_seconds - arrival_secs AS estimated_delay_secs
+            FROM (
+                -- Calculate delays and distance from position to next stop for filtering
+                SELECT *,
+                    datetime(unixepoch(timestamp) + round(dist_to_stop / speed_ms), 'unixepoch')
+                        AS estimated_arrival_time,
+                    (unixepoch(timestamp) + round(dist_to_stop / speed_ms)) - unixepoch(timestamp, 'start of day')
+                        AS estimated_arrival_seconds
+                FROM (
+                    SELECT
+                        spd.position_id, spd.trip_id, spd.current_stop_sequence, spd.timestamp,
+                        spd.current_status, spd.easting, spd.northing, spd.speed_ms,
+                        stp.arrival_time, stp.departure_time, stp.stop_id, stp.stop_east, stp.stop_north,
+                        stp.timepoint, stp.arrival_secs, stp.departure_secs, stp.stop_distance_metres,
+                        sqrt(pow(easting - stop_east, 2) + pow(northing - stop_north, 2)) AS dist_to_stop
+                    FROM gtfs_rt_vehicle_speed_estimates spd
+                        JOIN gtfs_stop_times stp ON spd.trip_id = stp.trip_id AND spd.current_stop_sequence = stp.stop_sequence
+                )
+            )
+            -- Unrealistic speeds and far from stops
+            WHERE
+                (speed_ms > 35 AND dist_to_stop > 1000)
+                OR abs(estimated_delay_secs) > 7200
+                OR dist_to_stop > (stop_distance_metres * 10)
+            """
+        )
+        conn.execute(stmt)
+        result = conn.execute(sql.text(f"SELECT count() FROM {filter_table_name}"))
+        LOG.info(
+            "Found %s rows in GTFS-rt vehicle positions table for"
+            " deletion due to unrealistically large speeds, delays or"
+            " distance from stops suggesting errors in the GPS position.",
+            f"{result.fetchone()[0]:,}",
+        )
+
+        stmt = sql.text(
+            "CREATE INDEX IF NOT EXISTS"
+            f" ix_{filter_table_name}_position_id"
+            f" ON {filter_table_name} (position_id)"
+        )
+        conn.execute(stmt)
+        LOG.debug("Created index on %s for position_id", filter_table_name)
+
+        # Clearing old calculated speeds
+        stmt = self._speeds_table.delete()
+        result = conn.execute(stmt)
+        LOG.info(
+            "Cleared %s table, removed %s rows",
+            self._speeds_table.name,
+            f"{result.rowcount:,}",
+        )
+
+        # Deleting incorrect positions
+        stmt = sql.text(
+            f"""
+            DELETE FROM {self._positions_table_name}
+            WHERE id IN (SELECT position_id FROM {filter_table_name})
+            """
+        )
+        result = conn.execute(stmt)
+        LOG.info(
+            "Removed %s rows from %s table with incorrect GPS data",
+            f"{result.rowcount:,}",
+            self._positions_table_name,
+        )
+
+    def calculate_stop_delays(self, conn: sqlalchemy.Connection) -> None:
+        table = self._stop_delays_table_name
+        LOG.info("Calculating stop time delays and saving to database table '%s'", table)
+        stmt = sql.text(f"DROP TABLE IF EXISTS {table};")
+        conn.execute(stmt)
+        LOG.debug("Clearing %s table", table)
+
+        stmt = sql.text(
+            f"""
+            CREATE TABLE {table} AS
+                SELECT
+                    *,
+                    estimated_arrival_seconds - arrival_secs AS estimated_delay_secs
+                FROM (
+                    SELECT *,
+                        datetime(unixepoch(timestamp) + round(stop_dist_metres / speed_ms), 'unixepoch')
+                            AS estimated_arrival_time,
+                        (unixepoch(timestamp) + round(stop_dist_metres / speed_ms)) - unixepoch(timestamp, 'start of day')
+                            AS estimated_arrival_seconds
+                    FROM (
+                        SELECT
+                            spd.position_id, spd.trip_id, spd.current_stop_sequence, spd.timestamp,
+                            spd.current_status, spd.easting, spd.northing, spd.speed_ms,
+                            stp.arrival_time, stp.departure_time, stp.stop_id, stp.stop_east, stp.stop_north,
+                            stp.timepoint, stp.arrival_secs, stp.departure_secs,
+                            sqrt(pow(easting - stop_east, 2) + pow(northing - stop_north, 2)) AS stop_dist_metres
+                        FROM gtfs_rt_vehicle_speed_estimates spd
+                            JOIN gtfs_stop_times stp
+                                ON spd.trip_id = stp.trip_id
+                                    AND spd.current_stop_sequence = stp.stop_sequence
+                    )
+                );
+            """
+        )
+        result = conn.execute(stmt)
+        LOG.debug(
+            "Calculated initial stop delay estimates for %s rows", f"{result.rowcount:,}"
+        )
+
+        stmt = sql.text(
+            f"""
+            UPDATE {table}
+            SET estimated_delay_secs = estimated_arrival_seconds - mod(arrival_secs, 86400)
+            WHERE abs(estimated_arrival_seconds - mod(arrival_secs, 86400)) < abs(estimated_delay_secs);
+            """
+        )
+        result = conn.execute(stmt)
+        LOG.debug(
+            "Updated stop delay estimates which cross midnight (%s rows)",
+            f"{result.rowcount:,}",
+        )
+
+        stmt = sql.text(
+            f"""
+            UPDATE {table}
+            SET
+                estimated_arrival_time = timestamp,
+                estimated_arrival_seconds = unixepoch(timestamp) - unixepoch(timestamp, 'start of day'),
+                estimated_delay_secs = unixepoch(timestamp) - unixepoch(timestamp, 'start of day') - arrival_secs
+            WHERE current_status = 'STOPPED_AT';
+            """
+        )
+        result = conn.execute(stmt)
+        LOG.debug(
+            "Calculated initial stop delay estimates for %s rows", f"{result.rowcount:,}"
+        )
+
+    def get_average_stop_delays(self, conn: sqlalchemy.Connection) -> pd.DataFrame:
+        LOG.info("Extracting average stop delays")
+        stmt = sql.text(
+            f"""
+            SELECT 
+                trip_id,
+                current_stop_sequence,
+                count(estimated_delay_secs) AS sample_size,
+                min(estimated_delay_secs) AS min_estimated_delay_secs,
+                max(estimated_delay_secs) AS max_estimated_delay_secs,
+                sum(estimated_delay_secs) / count(estimated_delay_secs)
+                    AS mean_estimated_delay_secs
+            FROM {self._stop_delays_table_name}
+            WHERE estimated_delay_secs IS NOT NULL
+            GROUP BY trip_id, current_stop_sequence"""
+        )
+        result = conn.execute(stmt)
+        data = pd.DataFrame(result.fetchall(), columns=list(result.keys()))
+
+        LOG.info("Calculate min, max and mean delays for %s trip stop times", f"{len(data):,}")
+        return data
+
+    def get_stop_delays_summary(self, conn: sqlalchemy.Connection) -> pd.DataFrame:
+        LOG.info("Extracting stop delays summary from %s", self._stop_delays_table_name)
+        groups = [
+            ("all", None),
+            ("positive", "estimated_delay_secs > 0"),
+            ("negative", "estimated_delay_secs < 0"),
+            ("zero", "estimated_delay_secs = 0"),
+        ]
+        statements = []
+
+        for name, condition in groups:
+            stmt = textwrap.dedent(
+                f"""
+                SELECT
+                    '{name}' AS "group",
+                    min(estimated_delay_secs) AS min_estimated_delay_secs,
+                    max(estimated_delay_secs) AS max_estimated_delay_secs,
+                    sum(estimated_delay_secs) / count(estimated_delay_secs)
+                        AS mean_estimated_delay_secs,
+                    count(estimated_delay_secs) AS sample_size
+                FROM {self._stop_delays_table_name}
+                WHERE estimated_delay_secs IS NOT NULL
+                """
+            ).strip()
+            if condition is not None:
+                stmt += f" AND {condition}"
+
+            statements.append(stmt)
+
+        result = conn.execute(sql.text("\n\nUNION\n\n".join(statements)))
+        return pd.DataFrame(result.fetchall(), columns=list(result.keys()))
 
 
 class _DataStorage(Protocol):
