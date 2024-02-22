@@ -12,13 +12,12 @@ def download_gtfs_feed(directory):
     current_date_time = current_datetime.strftime("%Y%m%d_%H-%M-%S")
 
     try:
-        print("Downloading started")
+        LOG.info("Downloading started")
         url = "https://data.bus-data.dft.gov.uk/timetable/download/gtfs-file/all"
 
         req = requests.get(url, stream=True)
 
-        filename = Path("GTFS_" + current_date_time + ".zip")
-        filepath = directory / filename
+        filepath = directory / f"GTFS_{current_date_time}.zip"
 
         with open(filepath, "wb") as output_file:
             total_length = int(req.headers.get("content-length"))
@@ -28,7 +27,7 @@ def download_gtfs_feed(directory):
             ):
                 if chunk:
                     output_file.write(chunk)
-        print("Downloading Completed")
+        LOG.info("Downloading Completed")
 
         # Extract the downloaded zip file to a folder with the same name
         extraction_folder = (
@@ -39,7 +38,7 @@ def download_gtfs_feed(directory):
         with zipfile.ZipFile(filepath, "r") as zip_ref:
             zip_ref.extractall(extraction_folder)
 
-        print(f"Extracted contents to {extraction_folder}")
+        LOG.info("Extracted contents to %s", extraction_folder)
 
         # Create an "ss" folder and move previous files
         ss_folder = directory / "ss"
@@ -49,16 +48,16 @@ def download_gtfs_feed(directory):
             if file != extraction_folder:
                 new_location = ss_folder / file.name
                 file.rename(new_location)
-                print(f"Moved {file.name} to {new_location}")
+                LOG.info("Moved %s to %s", file.name, new_location)
 
-    except requests.exceptions.RequestException as e:
-        print("Download failed:", e)
+    except requests.exceptions.RequestException:
+        LOG.error("Download failed:", exc_info=True)
 
     except zipfile.BadZipFile:
-        print("Failed to unzip the downloaded file.")
+        LOG.error("Failed to unzip the downloaded file.", exc_info=True)
 
-    except Exception as e:
-        print("An error occurred:", e)
+    except Exception:
+        LOG.error("An error occurred:", exc_info=True)
 
 
 if __name__ == "__main__":
