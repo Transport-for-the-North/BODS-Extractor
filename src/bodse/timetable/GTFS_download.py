@@ -1,3 +1,7 @@
+"""Python script for downloading the lastest version of the GTFS feed on BODs"""
+
+##### IMPORTS #####
+
 import requests
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -5,19 +9,29 @@ import zipfile
 import os
 from clint.textui import progress
 import sys
+import logging
 
 
 def download_gtfs_feed(directory):
+    """Function that will download the GTFS feed from BODS
+
+    Will download and unzip the lastest GTFS feed from BODS unless there is a feed less than a week old already in the specified repoistory.
+    Previous feeds will be moved to a "SS" folder.
+
+    Args:
+        directory (Path): filepath where GTFS feed is to be saved. Use full filepath rather then relative path.
+    """
+    BODS_URL = "https://data.bus-data.dft.gov.uk/timetable/download/gtfs-file/all"
+    LOG = logging.getLogger(__name__)
     current_datetime = datetime.now()
     current_date_time = current_datetime.strftime("%Y%m%d_%H-%M-%S")
 
     try:
         LOG.info("Downloading started")
-        url = "https://data.bus-data.dft.gov.uk/timetable/download/gtfs-file/all"
 
-        req = requests.get(url, stream=True)
-
-        filepath = directory / f"GTFS_{current_date_time}.zip"
+        req = requests.get(BODS_URL, stream=True)
+        filename = Path(f"GTFS_{current_date_time}.zip")
+        filepath = directory / filename
 
         with open(filepath, "wb") as output_file:
             total_length = int(req.headers.get("content-length"))
@@ -30,9 +44,7 @@ def download_gtfs_feed(directory):
         LOG.info("Downloading Completed")
 
         # Extract the downloaded zip file to a folder with the same name
-        extraction_folder = (
-            directory / filename.stem
-        )  # Using filename.stem to get the name without the extension
+        extraction_folder = directory / filename.stem
         extraction_folder.mkdir(exist_ok=True)
 
         with zipfile.ZipFile(filepath, "r") as zip_ref:
@@ -45,7 +57,9 @@ def download_gtfs_feed(directory):
         ss_folder.mkdir(exist_ok=True)
 
         for file in directory.glob("GTFS_*"):
-            if file != extraction_folder:
+            if str(file.name) == str(filename):
+                continue
+            elif file != extraction_folder:
                 new_location = ss_folder / file.name
                 file.rename(new_location)
                 LOG.info("Moved %s to %s", file.name, new_location)
@@ -61,11 +75,15 @@ def download_gtfs_feed(directory):
 
 
 if __name__ == "__main__":
-    GTFS_directory = Path("C:/Users/UKJMH006/Documents/TfN/Stage-2/GTFs_feeds/")
+    LOG = logging.getLogger(__name__)
+    logging.basicConfig(encoding="utf-8", level=logging.INFO)
+    GTFS_directory = Path(sys.argv[1])
+    print(GTFS_directory)
     folder_name = "GTFS"
 
     # Check for a command-line argument to force download
-    if len(sys.argv) > 1 and sys.argv[1] == "--force":
+    if len(sys.argv) > 2 and sys.argv[2] == "--force":
+        LOG.info("Download new GTFS feed")
         download_gtfs_feed(GTFS_directory)
     else:
         current_datetime = datetime.now()
@@ -95,12 +113,12 @@ if __name__ == "__main__":
 
         # Check if it's more than a week old
         if latest_date and (current_datetime - latest_date) >= timedelta(weeks=1):
-            print(
+            LOG.info(
                 f"'{latest_date}' is more than a week old, attempting to download new feed."
             )
             download_gtfs_feed(GTFS_directory)
 
         else:
-            print(
+            LOG.info(
                 f"No need to download. Latest folder '{latest_folder}' is less than a week old."
             )
