@@ -2,14 +2,46 @@
 
 ##### IMPORTS #####
 
-import requests
+# Built-Ins
+import logging
+import os
+import sys
+import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
-import zipfile
-import os
-from clint.textui import progress
-import sys
-import logging
+
+# Third Party
+import requests
+from tqdm import tqdm
+
+# Local Imports
+from bodse import request
+
+BODS_URL = "https://data.bus-data.dft.gov.uk/timetable/download/gtfs-file/all"
+LOG = logging.getLogger(__name__)
+
+
+def download_to_file(path: Path) -> None:
+    """Download GTFS file from BODS and save to file at `path`."""
+    LOG.info("Downloading GTFS file from BODS")
+    req = requests.get(BODS_URL, stream=True, timeout=request.TIMEOUT)
+    pbar = tqdm(
+        desc="Downloading GTFS file",
+        total=int(req.headers.get("content-length")),
+        unit="B",
+    )
+
+    with open(path, "wb") as output_file:
+        for chunk in req.iter_content(chunk_size=1024):
+            if chunk is None or len(chunk) == 0:
+                break
+
+            output_file.write(chunk)
+            pbar.update(len(chunk))
+
+        pbar.close()
+
+    LOG.info("Downloading completed and saved to '%s'", path)
 
 
 def download_gtfs_feed(directory):
@@ -21,27 +53,16 @@ def download_gtfs_feed(directory):
     Args:
         directory (Path): filepath where GTFS feed is to be saved. Use full filepath rather then relative path.
     """
-    BODS_URL = "https://data.bus-data.dft.gov.uk/timetable/download/gtfs-file/all"
-    LOG = logging.getLogger(__name__)
     current_datetime = datetime.now()
     current_date_time = current_datetime.strftime("%Y%m%d_%H-%M-%S")
 
     try:
         LOG.info("Downloading started")
 
-        req = requests.get(BODS_URL, stream=True)
         filename = Path(f"GTFS_{current_date_time}.zip")
         filepath = directory / filename
 
-        with open(filepath, "wb") as output_file:
-            total_length = int(req.headers.get("content-length"))
-            for chunk in progress.bar(
-                req.iter_content(chunk_size=1024),
-                expected_size=(total_length / 1024) + 1,
-            ):
-                if chunk:
-                    output_file.write(chunk)
-        LOG.info("Downloading Completed")
+        download_to_file(filepath)
 
         # Extract the downloaded zip file to a folder with the same name
         extraction_folder = directory / filename.stem
@@ -75,7 +96,6 @@ def download_gtfs_feed(directory):
 
 
 if __name__ == "__main__":
-    LOG = logging.getLogger(__name__)
     logging.basicConfig(encoding="utf-8", level=logging.INFO)
     GTFS_directory = Path(sys.argv[1])
     print(GTFS_directory)
