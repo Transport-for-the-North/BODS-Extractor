@@ -23,6 +23,9 @@ class Command(enum.Enum):
     DOWNLOAD = "download"
     ADJUST = "adjust"
 
+    def __str__(self) -> str:
+        return self.value
+
 
 def _setup_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(

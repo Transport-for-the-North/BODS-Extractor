@@ -25,6 +25,9 @@ class Command(enum.Enum):
     AVL_DOWNLOAD = "avl_download"
     AVL_ADJUST = "avl_adjust"
 
+    def __str__(self) -> str:
+        return self.value
+
 
 def _setup_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
