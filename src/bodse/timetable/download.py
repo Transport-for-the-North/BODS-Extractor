@@ -36,6 +36,7 @@ def download_to_file(path: Path) -> Path:
         desc="Downloading GTFS file",
         total=int(req.headers.get("content-length")),
         unit="B",
+        unit_scale=True,
     )
 
     with open(path, "wb") as output_file:

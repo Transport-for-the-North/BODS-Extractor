@@ -81,7 +81,7 @@ class RunMetadata(_TableBase):
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     zone_system_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("zoning_systems.id"), nullable=True
+        sqlalchemy.ForeignKey("zoning_systems.id", ondelete="CASCADE"), nullable=True
     )
     model_name: orm.Mapped[ModelName] = orm.mapped_column(
         sqlalchemy.Enum(ModelName), nullable=False
@@ -100,13 +100,15 @@ class Timetable(_TableBase):
     __tablename__ = "timetables"
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
-    run_id: orm.Mapped[int] = orm.mapped_column(sqlalchemy.ForeignKey("run_metadata.id"))
+    run_id: orm.Mapped[int] = orm.mapped_column(
+        sqlalchemy.ForeignKey("run_metadata.id", ondelete="CASCADE")
+    )
     feed_update_time: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=True)
     upload_date: orm.Mapped[datetime.date] = orm.mapped_column(nullable=False)
     timetable_path: orm.Mapped[str] = orm.mapped_column(nullable=False)
     adjusted: orm.Mapped[bool] = orm.mapped_column(nullable=False)
     base_timetable_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("timetables.id"), nullable=True
+        sqlalchemy.ForeignKey("timetables.id", ondelete="NO ACTION"), nullable=True
     )
     delay_calculation: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
 
@@ -130,7 +132,7 @@ class Database:
         model_name: ModelName,
         start_datetime: datetime.datetime,
         parameters: str,
-        sucessful: bool,
+        successful: bool,
         zone_system_id: Optional[int] = None,
         error: Optional[str] = None,
         output: Optional[str] = None,
@@ -143,7 +145,7 @@ class Database:
                 start_datetime=start_datetime,
                 end_datetime=datetime.datetime.now(),
                 parameters=parameters,
-                sucessful=sucessful,
+                successful=successful,
                 error=error,
                 output=output,
             )
@@ -181,13 +183,14 @@ class Database:
 
         with orm.Session(self.engine) as session:
             result = session.execute(stmt)
-            id_ = result.one().tuple()[0]
+            timetable_data = result.one().tuple()[0]
+            session.expunge_all()
             session.commit()
 
-        LOG.info("Inserted GTFS timetable into database with ID: %s", id_)
-        return id_
+        LOG.info("Inserted GTFS timetable into database with ID: %s", timetable_data.id)
+        return timetable_data
 
-    def find_recent_timetable(self, adjusted: bool = False) -> Timetable:
+    def find_recent_timetable(self, adjusted: bool = False) -> Optional[Timetable]:
         stmt = (
             sqlalchemy.select(Timetable)
             .where(Timetable.adjusted == adjusted)
@@ -197,6 +200,19 @@ class Database:
 
         with orm.Session(self.engine) as session:
             result = session.execute(stmt)
-            timetable = result.one().tuple()[0]
+            try:
+                timetable = result.one().tuple()[0]
+            except sqlalchemy.exc.NoResultFound:
+                return None
+            session.expunge_all()
 
         return timetable
+
+
+def init_sqlalchemy_logging(logger: logging.Logger) -> None:
+    """Sets sqlalchemy engine logger to INFO and adds filter to StreamHandlers on `logger`."""
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
+
+    for handler in logger.handlers:
+        if type(handler) == logging.StreamHandler:  # pylint: disable=unidiomatic-typecheck
+            handler.addFilter(lambda x: not x.name.startswith("sqlalchemy"))

@@ -65,19 +65,22 @@ def get_scheduled_timetable(
 
     scheduled_timetable = bsip_database.find_recent_timetable()
 
-    if not scheduled_timetable.actual_timetable_path.is_file():
-        raise FileNotFoundError(
-            f"cannot find file linked in database: '{scheduled_timetable.timetable_path}'"
-        )
+    if scheduled_timetable is not None:
+        if not scheduled_timetable.actual_timetable_path.is_file():
+            raise FileNotFoundError(
+                f"cannot find file linked in database: '{scheduled_timetable.timetable_path}'"
+            )
 
-    age = datetime.date.today() - scheduled_timetable.upload_date
-    if age.days <= timetable_max_days:
-        LOG.info(
-            "Found GTFS file <= %s days old (%s), so not downloading a new one",
-            timetable_max_days,
-            scheduled_timetable.actual_timetable_path.name,
-        )
-        return scheduled_timetable
+        age = datetime.date.today() - scheduled_timetable.upload_date
+        if age.days <= timetable_max_days:
+            LOG.info(
+                "Found GTFS file <= %s days old (%s) in database"
+                " with ID = %s, so not downloading a new one",
+                timetable_max_days,
+                scheduled_timetable.actual_timetable_path.name,
+                scheduled_timetable.id,
+            )
+            return scheduled_timetable
 
     path = timetable_folder / timetable.gtfs_filename()
     if path.is_file():
@@ -92,7 +95,7 @@ def get_scheduled_timetable(
             model_name=database.ModelName.BODSE_SCHEDULED,
             start_datetime=start_time,
             parameters=params,
-            sucessful=False,
+            successful=False,
             error=traceback.format_exc(),
         )
         raise
@@ -101,7 +104,7 @@ def get_scheduled_timetable(
         model_name=database.ModelName.BODSE_SCHEDULED,
         start_datetime=start_time,
         parameters=params,
-        sucessful=True,
+        successful=True,
         output=f"Downloaded timetable to: {path.absolute()}",
     )
     return bsip_database.insert_timetable(
@@ -131,8 +134,8 @@ def main(parameters: SchedulerConfig) -> None:
     log_file = parameters.output_folder / "BODSE_scheduler.log"
     details = log_helpers.ToolDetails(__package__, bodse.__version__)
 
-    with log_helpers.LogHelper("", details, log_file=log_file):
-        logging.getLogger("sqlalchemy.engine").setLevel(logging.DEBUG)
+    with log_helpers.LogHelper("", details, log_file=log_file) as helper:
+        database.init_sqlalchemy_logging(helper.logger)
 
         while True:
             try:
@@ -145,4 +148,5 @@ def main(parameters: SchedulerConfig) -> None:
                 LOG.critical("error during schedule tasks", exc_info=True)
                 # TODO(MB) Log errors to MS Teams
 
+            LOG.info("Completed task, waiting %.0f mins...", WAIT_TIME / 60)
             time.sleep(WAIT_TIME)
