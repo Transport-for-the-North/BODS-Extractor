@@ -88,7 +88,7 @@ class Timetable(_TableBase):
     run_id: orm.Mapped[int] = orm.mapped_column(sqlalchemy.ForeignKey("run_metadata.id"))
     feed_update_time: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=True)
     upload_date: orm.Mapped[datetime.date] = orm.mapped_column(nullable=False)
-    timetable_path: orm.Mapped[pathlib.Path] = orm.mapped_column(nullable=False)
+    timetable_path: orm.Mapped[str] = orm.mapped_column(nullable=False)
     adjusted: orm.Mapped[bool] = orm.mapped_column(nullable=False)
     base_timetable_id: orm.Mapped[Optional[int]] = orm.mapped_column(
         sqlalchemy.ForeignKey("timetables.id"), nullable=True
@@ -143,7 +143,7 @@ class Database:
         self,
         run_id: int,
         feed_update_time: Optional[datetime.datetime],
-        timetable_path: pathlib.Path,
+        timetable_path: str,
         adjusted: bool = False,
         base_timetable_id: Optional[int] = None,
     ) -> Timetable:

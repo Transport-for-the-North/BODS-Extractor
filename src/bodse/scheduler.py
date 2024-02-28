@@ -70,7 +70,7 @@ def get_scheduled_timetable(
         LOG.info(
             "Found GTFS file <= %s days old (%s), so not downloading a new one",
             timetable_max_days,
-            scheduled_timetable.timetable_path.name,
+            pathlib.Path(scheduled_timetable.timetable_path).name,
         )
         return scheduled_timetable
 
@@ -102,7 +102,7 @@ def get_scheduled_timetable(
     return bsip_database.insert_timetable(
         run_id=run_id,
         feed_update_time=timetable.get_feed_version(path),
-        timetable_path=path,
+        timetable_path=str(path),
     )
 
 
