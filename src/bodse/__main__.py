@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Front-end script for running the BODSE AVL package."""
+"""Front-end script for running the BODSE package."""
 
 ##### IMPORTS #####
 
@@ -10,6 +10,7 @@ import logging
 import pathlib
 
 # Local Imports
+from bodse import scheduler
 from bodse.avl import adjust, avl
 
 ##### CONSTANTS #####
@@ -18,10 +19,11 @@ LOG = logging.getLogger(__package__)
 
 ##### FUNCTIONS #####
 class Command(enum.Enum):
-    """AVL command to run."""
+    """BODSE command to run."""
 
-    DOWNLOAD = "download"
-    ADJUST = "adjust"
+    SCHEDULER = "scheduler"
+    AVL_DOWNLOAD = "avl_download"
+    AVL_ADJUST = "avl_adjust"
 
 
 def _setup_argparser() -> argparse.ArgumentParser:
@@ -31,7 +33,7 @@ def _setup_argparser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "command", choices=list(Command), type=Command, help="AVL command to run"
+        "command", choices=list(Command), type=Command, help="BODSE command to run"
     )
     parser.add_argument("config", type=pathlib.Path, help="path to config file")
 
@@ -42,11 +44,15 @@ def main() -> None:
     parser = _setup_argparser()
     args = parser.parse_args()
 
-    if args.command == Command.DOWNLOAD:
+    if args.command == Command.SCHEDULER:
+        params = scheduler.SchedulerConfig.load_yaml(args.config)
+        scheduler.main(params)
+
+    elif args.command == Command.AVL_DOWNLOAD:
         params = avl.DownloaderConfig.load_yaml(args.config)
         avl.main(params)
 
-    elif args.command == Command.ADJUST:
+    elif args.command == Command.AVL_ADJUST:
         params = adjust.AdjustConfig.load_yaml(args.config)
         adjust.main(params)
 
