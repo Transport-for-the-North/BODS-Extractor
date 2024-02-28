@@ -6,6 +6,7 @@ import argparse
 import enum
 import logging
 import pathlib
+from bodse import scheduler
 
 from bodse.avl import adjust, avl
 
@@ -19,6 +20,7 @@ class Command(enum.Enum):
 
     DOWNLOAD = "download"
     ADJUST = "adjust"
+    SCHEDULER = "scheduler"
 
 
 def _setup_argparser() -> argparse.ArgumentParser:
@@ -46,6 +48,10 @@ def main() -> None:
     elif args.command == Command.ADJUST:
         params = adjust.AdjustConfig.load_yaml(args.config)
         adjust.main(params)
+
+    elif args.command == Command.SCHEDULER:
+        params = scheduler.SchedulerConfig.load_yaml(args.config)
+        scheduler.main(params)
 
     else:
         raise ValueError(f"unknown command: {args.command}")
