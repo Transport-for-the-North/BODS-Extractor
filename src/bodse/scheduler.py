@@ -54,7 +54,7 @@ class SchedulerConfig(config_base.BaseConfig):
 
 def get_scheduled_timetable(
     bsip_database: database.Database, timetable_folder: pathlib.Path, timetable_max_days: int
-):
+) -> database.Timetable:
     start_time = datetime.datetime.now()
     params = json.dumps(
         {
@@ -65,12 +65,17 @@ def get_scheduled_timetable(
 
     scheduled_timetable = bsip_database.find_recent_timetable()
 
+    if not scheduled_timetable.actual_timetable_path.is_file():
+        raise FileNotFoundError(
+            f"cannot find file linked in database: '{scheduled_timetable.timetable_path}'"
+        )
+
     age = datetime.date.today() - scheduled_timetable.upload_date
     if age.days <= timetable_max_days:
         LOG.info(
             "Found GTFS file <= %s days old (%s), so not downloading a new one",
             timetable_max_days,
-            pathlib.Path(scheduled_timetable.timetable_path).name,
+            scheduled_timetable.actual_timetable_path.name,
         )
         return scheduled_timetable
 

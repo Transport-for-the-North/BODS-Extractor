@@ -59,6 +59,21 @@ class _TableBase(orm.DeclarativeBase):
     """Base table for BODSE database."""
 
 
+class ZoningSystem(_TableBase):
+    """Database table containing zoning system definitions."""
+
+    __tablename__ = "zoning_systems"
+
+    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
+    name: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    description: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    source: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    min_longitude: orm.Mapped[Optional[float]] = orm.mapped_column(nullable=True)
+    max_longitude: orm.Mapped[Optional[float]] = orm.mapped_column(nullable=True)
+    min_latitude: orm.Mapped[Optional[float]] = orm.mapped_column(nullable=True)
+    max_latitude: orm.Mapped[Optional[float]] = orm.mapped_column(nullable=True)
+
+
 class RunMetadata(_TableBase):
     """Database table containing run metadata."""
 
@@ -66,7 +81,7 @@ class RunMetadata(_TableBase):
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     zone_system_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("zoning.zone_system_id"), nullable=True
+        sqlalchemy.ForeignKey("zoning_systems.zone_system_id"), nullable=True
     )
     model_name: orm.Mapped[ModelName] = orm.mapped_column(
         sqlalchemy.Enum(ModelName), nullable=False
@@ -94,6 +109,10 @@ class Timetable(_TableBase):
         sqlalchemy.ForeignKey("timetables.id"), nullable=True
     )
     delay_calculation: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+
+    @property
+    def actual_timetable_path(self) -> pathlib.Path:
+        return pathlib.Path(self.timetable_path).resolve()
 
 
 class Database:
