@@ -16,6 +16,7 @@ import datetime
 import json
 import logging
 import pathlib
+import re
 import time
 import traceback
 
@@ -27,6 +28,8 @@ from pydantic import dataclasses, types
 # Local Imports
 import bodse
 from bodse import database, timetable
+from bodse import request
+from bodse.avl import adjust, avl, database as avl_db
 
 ##### CONSTANTS #####
 
@@ -40,13 +43,17 @@ WAIT_TIME = 3600
 @dataclasses.dataclass
 class TaskParameters:
     gtfs_folder: pydantic.DirectoryPath
+    avl_download_time: avl.DownloadTime
     max_timetable_age_days: int = pydantic.Field(7, ge=0)
+    max_avl_age_days: int = pydantic.Field(7, ge=0)
+    avl_database_delete_age_days: int = pydantic.Field(30, ge=0)
 
 
 class SchedulerConfig(config_base.BaseConfig):
     output_folder: types.DirectoryPath
     task_parameters: TaskParameters
     database_parameters: database.DatabaseConfig
+    api_auth_config: request.APIAuth
 
     run_months: int = pydantic.Field(2, ge=1, le=12)
     run_day: int = pydantic.Field(5, ge=1, le=28)
@@ -114,35 +121,164 @@ def get_scheduled_timetable(
     )
 
 
+def avl_download(
+    folder: pathlib.Path,
+    download_time: avl.DownloadTime,
+    bods_auth: request.APIAuth,
+    max_age_days: int,
+    delete_age_days: int,
+) -> pathlib.Path:
+    LOG.debug("AVL downloader parameters:\n%s", download_time)
+
+    # Check for recent AVL databases
+    name_format = "{}-AVL_download_db.sqlite"
+
+    database_paths: dict[datetime.date, pathlib.Path] = {}
+    for path in folder.glob(name_format.format("*")):
+        match = re.match(name_format.format(r"(\d{4})(\d{2})(\d{2})"), path.name, re.I)
+        if match is None:
+            LOG.warning("found AVL database with unexpected name: %s", path.name)
+            continue
+
+        try:
+            date = datetime.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        except ValueError as exc:
+            LOG.warning(
+                "found AVL database with incorrect date in name ('%s'): %s", path.name, exc
+            )
+            continue
+
+        age = datetime.date.today() - date
+        if age.days > delete_age_days:
+            LOG.info(
+                "Removing database older than %s days: %s (age %s days)",
+                delete_age_days,
+                path.name,
+                age.days,
+            )
+            path.unlink()
+
+        else:
+            database_paths[date] = path
+
+    if len(database_paths) > 0:
+        date = max(database_paths)
+        age = datetime.date.today() - date
+        if age.days <= max_age_days:
+            return database_paths[date]
+
+    db_path = folder / name_format.format(f"{datetime.date.today():%Y%m%d}")
+    gtfs_db = avl_db.GTFSRTDatabase(db_path)
+    avl.download(gtfs_db, download_time, bods_auth)
+
+    LOG.info("Tidying up AVL database tables")
+    with gtfs_db.connect() as conn:
+        gtfs_db.delete_duplicate_positions(conn)
+        conn.commit()
+
+        gtfs_db.fill_vehicle_speeds_table(conn)
+        conn.commit()
+
+    return db_path
+
+
+def avl_adjustment(
+    avl_db_path: pathlib.Path,
+    scheduled_timetable: database.Timetable,
+    bsip_database: database.Database,
+    avl_download_parameters: dict[str, int],
+):
+    start_time = datetime.datetime.now()
+    params = {
+        "avl_db_path": str(avl_db_path),
+        "base_timetable_path": scheduled_timetable.timetable_path,
+        "avl_download_parameters": avl_download_parameters,
+    }
+
+    stop_times = adjust.extract_stop_times_locations(scheduled_timetable.actual_timetable_path)
+    delays, delay_columns = adjust.calculate_stop_times_delays(avl_db_path, stop_times)
+    delayed_stop_times, time_columns = adjust.calculate_observed_stop_times(
+        stop_times, delays, delay_columns
+    )
+    del stop_times, delays
+
+    adjusted_gtfs_files = adjust.output_delayed_gtfs(
+        scheduled_timetable.actual_timetable_path,
+        delayed_stop_times,
+        time_columns,
+        scheduled_timetable.actual_timetable_path,
+    )
+
+    LOG.info("Inserting adjusted GTFS files into database")
+    run_id = bsip_database.insert_run_metadata(
+        model_name=database.ModelName.BODSE_ADJUSTED,
+        start_datetime=start_time,
+        parameters=json.dumps(params),
+        successful=True,
+        output="Downloaded timetables to:\n - "
+        + "\n - ".join(f"{i}: {j.absolute()}" for i, j in adjusted_gtfs_files.items()),
+    )
+
+    for path in adjusted_gtfs_files.values():
+        bsip_database.insert_timetable(
+            run_id=run_id,
+            feed_update_time=timetable.get_feed_version(path),
+            timetable_path=str(path),
+            adjusted=True,
+            base_timetable_id=scheduled_timetable.id,
+        )
+
+
 def run_tasks(
     params: TaskParameters,
     database_config: database.DatabaseConfig,
     output_folder: pathlib.Path,
+    bods_auth: request.APIAuth,
 ):
     db = database.Database(database_config)
 
     scheduled_timetable = get_scheduled_timetable(
-        db, params.gtfs_folder, params.max_timetable_age_days
+        bsip_database=db,
+        timetable_folder=params.gtfs_folder,
+        timetable_max_days=params.max_timetable_age_days,
     )
 
-    # Start AVL downloader for given period
-    # Calculate AVL adjusted GTFS schedule and upload to database
-    # Post sucesses to MS Teams
+    avl_database_path = avl_download(
+        folder=output_folder,
+        download_time=params.avl_download_time,
+        bods_auth=bods_auth,
+        max_age_days=params.max_avl_age_days,
+        delete_age_days=params.avl_database_delete_age_days,
+    )
+
+    avl_adjustment(
+        avl_database_path,
+        scheduled_timetable,
+        bsip_database=db,
+        avl_download_parameters=params.avl_download_time.asdict(),
+    )
+
+    # TODO Post sucesses to MS Teams
 
 
 def main(parameters: SchedulerConfig) -> None:
-    log_file = parameters.output_folder / "BODSE_scheduler.log"
+    log_file = (
+        parameters.output_folder / f"logs/BODSE_scheduler-{datetime.date.today():%Y%m%d}.log"
+    )
+    log_file.parent.mkdir(exist_ok=True)
     details = log_helpers.ToolDetails(__package__, bodse.__version__)
 
     with log_helpers.LogHelper("", details, log_file=log_file) as helper:
         database.init_sqlalchemy_logging(helper.logger)
 
+        # TODO Check date to see if tasks need running
         while True:
             try:
                 run_tasks(
                     parameters.task_parameters,
                     parameters.database_parameters,
                     parameters.output_folder,
+                    parameters.api_auth_config,
                 )
             except Exception:  # pylint: disable=broad-exception-caught
                 LOG.critical("error during schedule tasks", exc_info=True)

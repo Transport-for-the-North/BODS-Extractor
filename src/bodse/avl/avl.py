@@ -38,6 +38,7 @@ class DownloadTime:
     wait_minutes: int = pydantic.Field(1, ge=1)
 
     _MINIMUM_DOWNLOAD_MINUTES = 10
+    _attribute_names: tuple[str, ...] = ("days", "hours", "minutes", "wait_minutes")
 
     @pydantic.root_validator
     def _check_time(cls, values: dict) -> dict:
@@ -68,10 +69,14 @@ class DownloadTime:
         return values
 
     def __str__(self) -> str:
-        attrs = ["days", "hours", "minutes", "wait_minutes"]
-        params = "".join(f"\n  {i:<12.12} = {getattr(self, i)!s:>5}" for i in attrs)
+        params = "".join(
+            f"\n  {i:<12.12} = {getattr(self, i)!s:>5}" for i in self._attribute_names
+        )
 
         return f"DownloadTime({params}\n)"
+
+    def asdict(self) -> dict[str, int]:
+        return {i: getattr(self, i) for i in self._attribute_names}
 
 
 class DownloaderConfig(config_base.BaseConfig):

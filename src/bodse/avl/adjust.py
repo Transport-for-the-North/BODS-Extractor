@@ -208,7 +208,9 @@ def extract_stop_times_locations(gtfs_path: pathlib.Path) -> pd.DataFrame:
 
 
 def calculate_stop_times_delays(
-    db_path: pathlib.Path, stop_times: pd.DataFrame, output_folder: pathlib.Path
+    db_path: pathlib.Path,
+    stop_times: pd.DataFrame,
+    output_folder: Optional[pathlib.Path] = None,
 ) -> tuple[pd.DataFrame, dict[str, str]]:
     """Connect to AVL SQLite database and calculate and extract stop delays.
 
@@ -218,8 +220,9 @@ def calculate_stop_times_delays(
         Path to SQlite database containing AVL data.
     stop_times : pd.DataFrame
         Scheduled stop times from GTFS file.
-    output_folder : pathlib.Path
-        Folder to save summary outputs to.
+    output_folder : pathlib.Path, optional
+        Folder to save summary outputs to, if not given
+        summaries aren't saved.
 
     Returns
     -------
