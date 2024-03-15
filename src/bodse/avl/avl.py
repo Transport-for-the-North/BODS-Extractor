@@ -30,10 +30,12 @@ CONFIG_PATH = pathlib.Path("avl_downloader.yml")
 ##### CLASSES #####
 @dataclasses.dataclass
 class DownloadTime:
-    minutes: types.conint(ge=0) = 0
-    hours: types.conint(ge=0) = 0
-    days: types.conint(ge=0) = 0
-    wait_minutes: types.conint(ge=1) = 1
+    """AVL download duration."""
+
+    minutes: int = pydantic.Field(0, ge=0)
+    hours: int = pydantic.Field(0, ge=0)
+    days: int = pydantic.Field(0, ge=0)
+    wait_minutes: int = pydantic.Field(1, ge=1)
 
     _MINIMUM_DOWNLOAD_MINUTES = 10
 
@@ -54,10 +56,27 @@ class DownloadTime:
                 f"minutes, not {values['minutes']}"
             )
 
+        # Convert to minimum values for each attribute i.e. 60 mins should be 1 hour
+        if values["minutes"] >= 60:
+            extra_hours, values["minutes"] = divmod(values["minutes"], 60)
+            values["hours"] += extra_hours
+
+        if values["hours"] >= 24:
+            extra_days, values["hours"] = divmod(values["hours"], 24)
+            values["days"] += extra_days
+
         return values
+
+    def __str__(self) -> str:
+        attrs = ["days", "hours", "minutes", "wait_minutes"]
+        params = "".join(f"\n  {i:<12.12} = {getattr(self, i)!s:>5}" for i in attrs)
+
+        return f"DownloadTime({params}\n)"
 
 
 class DownloaderConfig(config_base.BaseConfig):
+    """Config for downloading AVL data."""
+
     output_folder: types.DirectoryPath
     # TODO(MB) Allow this to be file path or API auth class
     api_auth_config: types.FilePath
@@ -78,7 +97,7 @@ def store_raw(avl_database: database.RawAVLDatabase, auth: request.APIAuth):
     url = parse.urljoin(request.BODS_API_BASE_URL, raw.API_ENDPOINT)
     xml_response = request.get_str(
         url=url,
-        auth=auth
+        auth=auth,
         # params={"boundingBox": "51.401,51.509,0.01,0.201"},
     )
     LOG.info("Downloaded raw XML data from %s", url)
@@ -149,36 +168,53 @@ def _download_iterator(timings: DownloadTime) -> Iterator[int]:
             time.sleep(abs(remaining_wait))
 
 
-def main(params: DownloaderConfig):
+def download(
+    gtfs_db: database.GTFSRTDatabase, download_time: DownloadTime, bods_auth: request.APIAuth
+) -> None:
+    """Download AVL GTFS-rt feeds and save in database.
+
+    Parameters
+    ----------
+    gtfs_db : database.GTFSRTDatabase
+        Database configuration to save data to.
+    download_time : DownloadTime
+        Parameters defining how long to download data for.
+    bods_auth : request.APIAuth
+        User and password for connecting to BODS API.
+    """
+    LOG.info("Started downloading AVL data to %s", gtfs_db.path)
+    LOG.debug("Accessing BODS using user account: %s", bods_auth.name)
+
+    for _ in _download_iterator(download_time):
+        # TODO Look into using concurrent.futures.ThreadPoolExecutor to perform
+        # download and insert while the iterator is waiting
+        try:
+            feed = gtfs.download(bods_auth)
+        except requests.HTTPError as exc:
+            LOG.error("HTTP error when downloading AVL feed: %s", exc)
+            continue
+
+        with gtfs_db.connect() as conn:
+            gtfs_db.insert_feed(conn, feed)
+            conn.commit()
+
+    LOG.info("Finished downloading AVL data")
+
+
+def main(output_folder: pathlib.Path, download_time: DownloadTime, bods_auth: request.APIAuth):
+    """Main function for running AVL downloader."""
     tool_details = log_helpers.ToolDetails(bodse.__package__, bodse.__version__)
 
-    output_folder = params.output_folder / f"BODSE AVL Outputs - {dt.date.today():%Y-%m-%d}"
+    output_folder = output_folder / f"BODSE AVL Outputs - {dt.date.today():%Y-%m-%d}"
     output_folder.mkdir(exist_ok=True, parents=True)
     log_file = output_folder / "AVL_downloader.log"
 
     with log_helpers.LogHelper(bodse.__package__, tool_details, log_file=log_file):
-        LOG.debug("AVL downloader parameters:\n%s", params.to_yaml())
+        LOG.debug("AVL downloader parameters:\n%s", download_time)
         LOG.info("Outputs saved to: %s", output_folder)
 
-        bods_auth = request.APIAuth.load_yaml(params.api_auth_config)
-        LOG.info("Accessing BODS using user account: %s", bods_auth.name)
-
         gtfs_db = database.GTFSRTDatabase(output_folder / "gtfs-rt.sqlite")
-
-        for _ in _download_iterator(params.download_time):
-            # TODO Look into using concurrent.futures.ThreadPoolExecutor to perform
-            # download and insert while the iterator is waiting
-            try:
-                feed = gtfs.download(bods_auth)
-            except requests.HTTPError as exc:
-                LOG.error("HTTP error when downloading AVL feed: %s", exc)
-                continue
-
-            with gtfs_db.connect() as conn:
-                gtfs_db.insert_feed(conn, feed)
-                conn.commit()
-
-        LOG.info("Finished downloading AVL data")
+        download(gtfs_db, download_time, bods_auth)
 
         LOG.info("Tidying up AVL database tables")
         with gtfs_db.connect() as conn:

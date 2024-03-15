@@ -8,6 +8,7 @@ import argparse
 import enum
 import logging
 import pathlib
+from bodse import request
 
 # Local Imports
 from bodse.avl import adjust, avl
@@ -42,12 +43,18 @@ def _setup_argparser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Main function for running AVL download or adjustment from CLI."""
     parser = _setup_argparser()
     args = parser.parse_args()
 
     if args.command == Command.DOWNLOAD:
         params = avl.DownloaderConfig.load_yaml(args.config)
-        avl.main(params)
+
+        avl.main(
+            params.output_folder,
+            params.download_time,
+            request.APIAuth.load_yaml(params.api_auth_config),
+        )
 
     elif args.command == Command.ADJUST:
         params = adjust.AdjustConfig.load_yaml(args.config)

@@ -97,7 +97,7 @@ def merge_indicator_check(
         f"{merge['both']:,} rows in both datasets\n"
         f"{merge['left_only']:,} rows in {left_name} only\n"
         f"{merge['right_only']:,} rows in {right_name} only\n"
-        f"{len(data)} rows in full dataset"
+        f"{len(data):,} rows in full dataset"
     )
 
     raise ValueError(f"merging {left_name} and {right_name} is not complete:\n{msg}")

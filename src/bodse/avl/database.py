@@ -26,7 +26,7 @@ from bodse.avl import gtfs, raw
 
 ##### CONSTANTS #####
 LOG = logging.getLogger(__name__)
-_SQLALCHEMY_TYPE_LOOKUP = {
+_SQLALCHEMY_TYPE_LOOKUP: dict[str, type] = {
     # Built-in types
     "str": types.String,
     "int": types.Integer,
@@ -37,12 +37,12 @@ _SQLALCHEMY_TYPE_LOOKUP = {
     "time": types.Time,
     "bool": types.Boolean,
     # Custom enum types
-    "incrementality": types.Enum(gtfs.Incrementality),
-    "schedulerelationship": types.Enum(gtfs.ScheduleRelationship),
-    "vehiclestopstatus": types.Enum(gtfs.VehicleStopStatus),
-    "congestionlevel": types.Enum(gtfs.CongestionLevel),
-    "occupancystatus": types.Enum(gtfs.OccupancyStatus),
-    "wheelchairaccessible": types.Enum(gtfs.WheelchairAccessible),
+    "incrementality": types.Enum(gtfs.Incrementality),  # type: ignore
+    "schedulerelationship": types.Enum(gtfs.ScheduleRelationship),  # type: ignore
+    "vehiclestopstatus": types.Enum(gtfs.VehicleStopStatus),  # type: ignore
+    "congestionlevel": types.Enum(gtfs.CongestionLevel),  # type: ignore
+    "occupancystatus": types.Enum(gtfs.OccupancyStatus),  # type: ignore
+    "wheelchairaccessible": types.Enum(gtfs.WheelchairAccessible),  # type: ignore
 }
 
 
@@ -61,7 +61,7 @@ class _Database(abc.ABC):
             Whether to delete `path` if it already exists and
             re-create it or just append to existing database.
         """
-        self._path = pathlib.Path(path)
+        self.path = pathlib.Path(path)
         self._engine = sqlalchemy.create_engine(f"sqlite:///{path}")
         self._metadata = sqlalchemy.MetaData()
 
@@ -85,10 +85,10 @@ class _Database(abc.ABC):
         overwrite : bool, default False
             Whether to delete database if it already exists.
         """
-        if self._path.is_file() and overwrite:
-            self._path.unlink()
+        if self.path.is_file() and overwrite:
+            self.path.unlink()
 
-        if not self._path.is_file():
+        if not self.path.is_file():
             self._metadata.create_all(self._engine)
 
     @property
@@ -234,29 +234,28 @@ class GTFSRTDatabase(_Database):
         feed_id_column = sqlalchemy.Column("feed_id", types.String, nullable=False)
 
         # Not yet implemented functionality to store trip updates in the database
-        if False:
-            self._trip_table = sqlalchemy.Table(
-                self._trip_table_name,
-                self._metadata,
-                id_column.copy(),
-                metadata_column.copy(),
-                feed_id_column.copy(),
-                *columns_from_class(gtfs.TripDescriptor),
-                *columns_from_class(
-                    gtfs.VehicleDescriptor, prefix=self._prefixes["vehicle_descriptor"]
-                ),
-                *columns_from_class(
-                    gtfs.StopTimeUpdate, exclude_fields=self._excludes.get("stop_time_update")
-                ),
-                *columns_from_class(gtfs.StopTimeEvent, prefix=self._prefixes["stop_arrival"]),
-                *columns_from_class(
-                    gtfs.StopTimeEvent, prefix=self._prefixes["stop_departure"]
-                ),
-                *columns_from_class(
-                    gtfs.TripUpdate,
-                    exclude_fields=self._excludes.get("trip_update"),
-                ),
-            )
+        # self._trip_table = sqlalchemy.Table(
+        #     self._trip_table_name,
+        #     self._metadata,
+        #     id_column.copy(),
+        #     metadata_column.copy(),
+        #     feed_id_column.copy(),
+        #     *columns_from_class(gtfs.TripDescriptor),
+        #     *columns_from_class(
+        #         gtfs.VehicleDescriptor, prefix=self._prefixes["vehicle_descriptor"]
+        #     ),
+        #     *columns_from_class(
+        #         gtfs.StopTimeUpdate, exclude_fields=self._excludes.get("stop_time_update")
+        #     ),
+        #     *columns_from_class(gtfs.StopTimeEvent, prefix=self._prefixes["stop_arrival"]),
+        #     *columns_from_class(
+        #         gtfs.StopTimeEvent, prefix=self._prefixes["stop_departure"]
+        #     ),
+        #     *columns_from_class(
+        #         gtfs.TripUpdate,
+        #         exclude_fields=self._excludes.get("trip_update"),
+        #     ),
+        # )
 
         self._positions_table = sqlalchemy.Table(
             self._positions_table_name,
@@ -528,7 +527,7 @@ class GTFSRTDatabase(_Database):
         )
         LOG.info(
             "Filled %s rows in speeds table in %s",
-            result.rowcount,
+            f"{result.rowcount:,}",
             utils.readable_seconds(int(time.perf_counter() - start)),
         )
 
@@ -618,6 +617,15 @@ class GTFSRTDatabase(_Database):
         )
 
     def filter_vehicle_positions(self, conn: sqlalchemy.Connection) -> None:
+        """Remove AVL points where the GPS data may be incorrect.
+
+        The AVL data is removed if it falls into any of the following:
+        - High speed (from last AVL position) and far from next stop; or
+        - Large absolute delay; or
+        - Very large distance from next stop.
+
+        The removed data will be stored in table "gtfs_position_filter".
+        """
         # TODO(MB) Add parameters for speed, delay and distance filters
         LOG.info("Removing GTFS-rt vehicle positions with incorrect GPS data")
         filter_table_name = "gtfs_position_filter"
@@ -662,7 +670,8 @@ class GTFSRTDatabase(_Database):
             "Found %s rows in GTFS-rt vehicle positions table for"
             " deletion due to unrealistically large speeds, delays or"
             " distance from stops suggesting errors in the GPS position.",
-            f"{result.fetchone()[0]:,}",
+            # Mypy false positive flagging not indexable
+            f"{result.fetchone()[0]:,}",  # type: ignore
         )
 
         stmt = sql.text(
@@ -697,6 +706,11 @@ class GTFSRTDatabase(_Database):
         )
 
     def calculate_stop_delays(self, conn: sqlalchemy.Connection) -> None:
+        """Calculate estimated delay to stops where AVL data is available.
+
+        Delay estimates are saved to table with name
+        `GTFSRTDatabase._stop_delays_table_name`.
+        """
         table = self._stop_delays_table_name
         LOG.info("Calculating stop time delays and saving to database table '%s'", table)
         stmt = sql.text(f"DROP TABLE IF EXISTS {table};")
@@ -763,8 +777,23 @@ class GTFSRTDatabase(_Database):
             "Calculated initial stop delay estimates for %s rows", f"{result.rowcount:,}"
         )
 
-    def get_average_stop_delays(self, conn: sqlalchemy.Connection) -> pd.DataFrame:
+    def get_average_stop_delays(
+        self, conn: sqlalchemy.Connection
+    ) -> tuple[pd.DataFrame, dict[str, str]]:
+        """Extract average stop delays for all stops with AVL data.
+
+        Returns
+        -------
+        pd.DataFrame
+            Average stop delays with columns: 'trip_id',
+            'current_stop_sequence', 'sample_size' and
+            delay columns.
+        dict[str, str]
+            Lookup from average type (min, max, mean) to
+            the delay column name.
+        """
         LOG.info("Extracting average stop delays")
+        delay_columns = {i: f"{i}_estimated_delay_secs" for i in ("mean", "min", "max")}
         stmt = sql.text(
             f"""
             SELECT 
@@ -783,9 +812,18 @@ class GTFSRTDatabase(_Database):
         data = pd.DataFrame(result.fetchall(), columns=list(result.keys()))
 
         LOG.info("Calculate min, max and mean delays for %s trip stop times", f"{len(data):,}")
-        return data
+        return data, delay_columns
 
     def get_stop_delays_summary(self, conn: sqlalchemy.Connection) -> pd.DataFrame:
+        """Extract a summary of the stop delays at different aggregations.
+
+        Returns
+        -------
+        pd.DataFrame
+            Summary of stop delays with columns: "group",
+            "min_estimated_delay_secs", "max_estimated_delay_secs",
+            "mean_estimated_delay_secs" and "sample_size".
+        """
         LOG.info("Extracting stop delays summary from %s", self._stop_delays_table_name)
         groups = [
             ("all", None),
@@ -850,7 +888,7 @@ def columns_from_class(
         if exclude_fields is not None and field.name in exclude_fields:
             continue
 
-        type_, nullable = type_lookup(field.type)
+        type_, nullable = type_lookup(field.type)  # type: ignore
         col = sqlalchemy.Column(prefix + field.name, type_=type_, nullable=nullable)
         columns.append(col)
 
