@@ -1,10 +1,14 @@
-# python>=3.11.0, <4.0.0
+python>=3.11.0, <4.0.0
 requests>=2.31.0, <3.0.0
 caf.toolkit>=0.2.1, <0.3.0
 sqlalchemy>=2.0.0, <3.0.0
 psycopg2
 tqdm>=4.66.0, <5.0.0
-gtfs-realtime-bindings>=1.0.0, <2.0.0pip
 pydantic>=1.10.0, <2.0.0
 # Required for converting AVL from lat / lon to easting / northing
 pyproj>=3.6.0, <4.0.0
+
+# Packages not available on conda-forge, only available on PyPI
+gtfs-realtime-bindings>=1.0.0, <2.0.0
+# Required for posting to MS Teams
+pymsteams

@@ -34,6 +34,7 @@ class DatabaseConfig:
     port: int = 5432
 
     def create_url(self) -> sqlalchemy.URL:
+        """Create PostgreSQL database URL from config parameters."""
         return sqlalchemy.URL.create(
             "postgresql",
             username=self.username,
@@ -62,7 +63,7 @@ class _TableBase(orm.DeclarativeBase):
 class ZoningSystem(_TableBase):
     """Database table containing zoning system definitions."""
 
-    __tablename__ = "zoning_systems"
+    __tablename__ = "common.zoning_systems"
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     name: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
@@ -77,10 +78,10 @@ class ZoningSystem(_TableBase):
 class RunMetadata(_TableBase):
     """Database table containing run metadata."""
 
-    __tablename__ = "run_metadata"
+    __tablename__ = "bus.run_metadata"
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
-    zone_system_id: orm.Mapped[Optional[int]] = orm.mapped_column(
+    zoning_systems_id: orm.Mapped[Optional[int]] = orm.mapped_column(
         sqlalchemy.ForeignKey("zoning_systems.id", ondelete="CASCADE"), nullable=True
     )
     model_name: orm.Mapped[ModelName] = orm.mapped_column(
@@ -97,10 +98,10 @@ class RunMetadata(_TableBase):
 class Timetable(_TableBase):
     """Database table storing GTFS timetables."""
 
-    __tablename__ = "timetables"
+    __tablename__ = "bus.timetables"
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
-    run_id: orm.Mapped[int] = orm.mapped_column(
+    run_metadata_id: orm.Mapped[int] = orm.mapped_column(
         sqlalchemy.ForeignKey("run_metadata.id", ondelete="CASCADE")
     )
     feed_update_time: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=True)
@@ -114,6 +115,7 @@ class Timetable(_TableBase):
 
     @property
     def actual_timetable_path(self) -> pathlib.Path:
+        """Full resolved Path to the timetable."""
         return pathlib.Path(self.timetable_path).resolve()
 
 
@@ -133,14 +135,38 @@ class Database:
         start_datetime: datetime.datetime,
         parameters: str,
         successful: bool,
-        zone_system_id: Optional[int] = None,
+        zoning_systems_id: Optional[int] = None,
         error: Optional[str] = None,
         output: Optional[str] = None,
     ) -> int:
+        """Insert run metadata into the database table.
+
+        Parameters
+        ----------
+        model_name : ModelName
+            Name of the model which has ran.
+        start_datetime : datetime.datetime
+            Datetime for the start of the run.
+        parameters : str
+            JSON formatted parameters for the run.
+        successful : bool
+            If the model run was successful or not.
+        zoning_systems_id : int, optional
+            ID for the zone system, if relevant.
+        error : str, optional
+            Error message, if an error occured.
+        output : str, optional
+            Output message.
+
+        Returns
+        -------
+        int
+            ID from the run metadata table.
+        """
         stmt = (
             sqlalchemy.insert(RunMetadata)
             .values(
-                zone_system_id=zone_system_id,
+                zoning_systems_id=zoning_systems_id,
                 model_name=model_name,
                 start_datetime=start_datetime,
                 end_datetime=datetime.datetime.now(),
@@ -162,16 +188,40 @@ class Database:
 
     def insert_timetable(
         self,
-        run_id: int,
+        run_metadata_id: int,
         feed_update_time: Optional[datetime.datetime],
         timetable_path: str,
         adjusted: bool = False,
         base_timetable_id: Optional[int] = None,
     ) -> Timetable:
+        """Insert timetable data into database.
+
+        Parameters
+        ----------
+        run_metadata_id : int
+            ID for the row in the run metadata table
+            corresponding to this timetable data.
+        feed_update_time : datetime.datetime | None
+            Last time the GTFS feed was updated on BODS.
+        timetable_path : str
+            Path to the timetable GTFS file.
+        adjusted : bool, default False
+            False if the timetable has been downloaded from BODS.
+            True if this timetable has been adjusted, usually
+            with the AVL adjustment process.
+        base_timetable_id : int, required if `adjusted` is True
+            ID (in this database table) of the unadjusted timetable
+            used as an input to produce this adjusted timetable.
+
+        Returns
+        -------
+        Timetable
+            Read-only view of timetable data stored in the database.
+        """
         stmt = (
             sqlalchemy.insert(Timetable)
             .values(
-                run_id=run_id,
+                run_metadata_id=run_metadata_id,
                 feed_update_time=feed_update_time,
                 upload_date=datetime.date.today(),
                 timetable_path=timetable_path,
@@ -191,6 +241,19 @@ class Database:
         return timetable_data
 
     def find_recent_timetable(self, adjusted: bool = False) -> Optional[Timetable]:
+        """Find the most recent timetable uploaded to the database.
+
+        Parameters
+        ----------
+        adjusted : bool, default False
+            Whether to look for adjusted or unadjusted timetables.
+
+        Returns
+        -------
+        Timetable | None
+            Read-only view of database row for most recent timetable found,
+            or None if no timetables are found.
+        """
         stmt = (
             sqlalchemy.select(Timetable)
             .where(Timetable.adjusted == adjusted)

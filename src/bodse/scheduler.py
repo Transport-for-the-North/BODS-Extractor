@@ -19,6 +19,7 @@ import pathlib
 import re
 import time
 import traceback
+from typing import Optional
 
 # Third Party
 import pydantic
@@ -27,9 +28,9 @@ from pydantic import dataclasses, types
 
 # Local Imports
 import bodse
-from bodse import database, timetable
-from bodse import request
-from bodse.avl import adjust, avl, database as avl_db
+from bodse import database, request, teams, timetable
+from bodse.avl import adjust, avl
+from bodse.avl import database as avl_db
 
 ##### CONSTANTS #####
 
@@ -42,6 +43,8 @@ WAIT_TIME = 3600
 
 @dataclasses.dataclass
 class TaskParameters:
+    """Parameters for scheduled BODSE tasks."""
+
     gtfs_folder: pydantic.DirectoryPath
     avl_download_time: avl.DownloadTime
     max_timetable_age_days: int = pydantic.Field(7, ge=0)
@@ -50,18 +53,66 @@ class TaskParameters:
 
 
 class SchedulerConfig(config_base.BaseConfig):
+    """Parameters for running BODSE scheduler."""
+
     output_folder: types.DirectoryPath
     task_parameters: TaskParameters
     database_parameters: database.DatabaseConfig
     api_auth_config: request.APIAuth
+    teams_webhook_url: Optional[pydantic.HttpUrl] = None
 
     run_months: int = pydantic.Field(2, ge=1, le=12)
     run_day: int = pydantic.Field(5, ge=1, le=28)
 
 
+def _log_success(message: str, teams_post: Optional[teams.TeamsPost] = None) -> None:
+    """Log message and post to Teams channel, if available."""
+    LOG.info(message)
+
+    if teams_post is not None:
+        teams_post.post_success(message)
+
+
 def get_scheduled_timetable(
-    bsip_database: database.Database, timetable_folder: pathlib.Path, timetable_max_days: int
+    bsip_database: database.Database,
+    timetable_folder: pathlib.Path,
+    timetable_max_days: int,
+    teams_post: Optional[teams.TeamsPost] = None,
 ) -> database.Timetable:
+    """Download scheduled GTFS timetable from BODS.
+
+    Before downloading, checks if a recent timetable is
+    already available in the database.
+
+    Parameters
+    ----------
+    bsip_database : database.Database
+        Database for storing the timetable data.
+    timetable_folder : pathlib.Path
+        Folder to store the GTFS timetable files in.
+    timetable_max_days : int
+        If the most recent scheduled timetable in the database is
+        <= this value, then it is returned instead of downloading
+        a new timetable file.
+    teams_post : teams.TeamsPost, optional
+        Instance of TeamsPost to use for posting success messages
+        to a Teams channel.
+
+    Returns
+    -------
+    database.Timetable
+        Read-only row of data from the database for the timetable.
+
+    Raises
+    ------
+    FileNotFoundError
+        If timetable data is found in the database but the GTFS file
+        can't be found.
+    FileExistsError
+        If a file already exists at the location the new GTFS file
+        will be downloaded to, downloaded GTFS files contain today's
+        date in the filename.
+    """
     start_time = datetime.datetime.now()
     params = json.dumps(
         {
@@ -107,18 +158,26 @@ def get_scheduled_timetable(
         )
         raise
 
-    run_id = bsip_database.insert_run_metadata(
+    run_metadata_id = bsip_database.insert_run_metadata(
         model_name=database.ModelName.BODSE_SCHEDULED,
         start_datetime=start_time,
         parameters=params,
         successful=True,
         output=f"Downloaded timetable to: {path.absolute()}",
     )
-    return bsip_database.insert_timetable(
-        run_id=run_id,
+    timetable_data = bsip_database.insert_timetable(
+        run_metadata_id=run_metadata_id,
         feed_update_time=timetable.get_feed_version(path),
         timetable_path=str(path),
     )
+
+    _log_success(
+        f"Downloaded timetable from BODS to: {path.absolute()}\nSaved to database"
+        f" with run_metadata_id {run_metadata_id:,} and timetable id {timetable_data.id}",
+        teams_post,
+    )
+
+    return timetable_data
 
 
 def avl_download(
@@ -127,7 +186,34 @@ def avl_download(
     bods_auth: request.APIAuth,
     max_age_days: int,
     delete_age_days: int,
+    teams_post: Optional[teams.TeamsPost] = None,
 ) -> pathlib.Path:
+    """Download AVL data (GTFS-rt) from BODS for given period of time.
+
+    Parameters
+    ----------
+    folder : pathlib.Path
+        Folder to save SQLite database to containing downloaded AVL data.
+    download_time : avl.DownloadTime
+        Time to download AVL data for.
+    bods_auth : request.APIAuth
+        Username and password for BODS.
+    max_age_days : int
+        If the most recent AVL database is <= this value,
+        then new AVL data isn't download and instead the path
+        to this SQLite database is returned.
+    delete_age_days : int
+        Any AVL SQLite databases found in `folder` which are older
+        than this are deleted.
+    teams_post : teams.TeamsPost, optional
+        Instance of TeamsPost to use for posting success messages
+        to a Teams channel.
+
+    Returns
+    -------
+    pathlib.Path
+        Path to SQLite database containing downloaded AVL data.
+    """
     LOG.debug("AVL downloader parameters:\n%s", download_time)
 
     # Check for recent AVL databases
@@ -179,6 +265,10 @@ def avl_download(
         gtfs_db.fill_vehicle_speeds_table(conn)
         conn.commit()
 
+    _log_success(
+        f"Finished AVL download with all AVL data stored in '{gtfs_db.path}'", teams_post
+    )
+
     return db_path
 
 
@@ -187,7 +277,25 @@ def avl_adjustment(
     scheduled_timetable: database.Timetable,
     bsip_database: database.Database,
     avl_download_parameters: dict[str, int],
+    teams_post: Optional[teams.TeamsPost] = None,
 ):
+    """Adjust the GTFS schedule using delays calculated from AVL data.
+
+    Parameters
+    ----------
+    avl_db_path : pathlib.Path
+        Path to SQLite database containing downloaded AVL data.
+    scheduled_timetable : database.Timetable
+        Scheduled timetable data downloaded from BODS.
+    bsip_database : database.Database
+        PostgreSQL database for storing the adjusted timetables data.
+    avl_download_parameters : dict[str, int]
+        Parameters used for AVL download, will be stored in the run
+        metadata table in the database.
+    teams_post : teams.TeamsPost, optional
+        Instance of TeamsPost to use for posting success messages
+        to a Teams channel.
+    """
     start_time = datetime.datetime.now()
     params = {
         "avl_db_path": str(avl_db_path),
@@ -210,7 +318,7 @@ def avl_adjustment(
     )
 
     LOG.info("Inserting adjusted GTFS files into database")
-    run_id = bsip_database.insert_run_metadata(
+    run_metadata_id = bsip_database.insert_run_metadata(
         model_name=database.ModelName.BODSE_ADJUSTED,
         start_datetime=start_time,
         parameters=json.dumps(params),
@@ -219,14 +327,23 @@ def avl_adjustment(
         + "\n - ".join(f"{i}: {j.absolute()}" for i, j in adjusted_gtfs_files.items()),
     )
 
+    db_ids = []
     for path in adjusted_gtfs_files.values():
-        bsip_database.insert_timetable(
-            run_id=run_id,
+        timetable_data = bsip_database.insert_timetable(
+            run_metadata_id=run_metadata_id,
             feed_update_time=timetable.get_feed_version(path),
             timetable_path=str(path),
             adjusted=True,
             base_timetable_id=scheduled_timetable.id,
         )
+        db_ids.append(timetable_data.id)
+
+    _log_success(
+        "Finished AVL timetable adjustment, metadata saved to database with id"
+        f" {run_metadata_id} and adjusted timetables saved to database with ids:"
+        + ", ".join(str(i) for i in db_ids),
+        teams_post,
+    )
 
 
 def run_tasks(
@@ -234,13 +351,30 @@ def run_tasks(
     database_config: database.DatabaseConfig,
     output_folder: pathlib.Path,
     bods_auth: request.APIAuth,
+    teams_post: Optional[teams.TeamsPost] = None,
 ):
+    """Run scheduler tasks to download and adjust timetable and save to database.
+
+    Parameters
+    ----------
+    params : TaskParameters
+        Various required parameters / settings.
+    database_config : database.DatabaseConfig
+        Connection parameters for the PostgreSQL database.
+    output_folder : pathlib.Path
+        Folder to save any outputs to.
+    bods_auth : request.APIAuth
+        Username and password for connecting to the BODS API.
+    teams_post : teams.TeamsPost, optional
+        Instance of TeamsPost for posting success messages to MS Teams channel.
+    """
     db = database.Database(database_config)
 
     scheduled_timetable = get_scheduled_timetable(
         bsip_database=db,
         timetable_folder=params.gtfs_folder,
         timetable_max_days=params.max_timetable_age_days,
+        teams_post=teams_post,
     )
 
     avl_database_path = avl_download(
@@ -249,6 +383,7 @@ def run_tasks(
         bods_auth=bods_auth,
         max_age_days=params.max_avl_age_days,
         delete_age_days=params.avl_database_delete_age_days,
+        teams_post=teams_post,
     )
 
     avl_adjustment(
@@ -256,12 +391,12 @@ def run_tasks(
         scheduled_timetable,
         bsip_database=db,
         avl_download_parameters=params.avl_download_time.asdict(),
+        teams_post=teams_post,
     )
-
-    # TODO Post sucesses to MS Teams
 
 
 def main(parameters: SchedulerConfig) -> None:
+    """Run BODSE scheduler, to regularly download and adjust timetables."""
     log_file = (
         parameters.output_folder / f"logs/BODSE_scheduler-{datetime.date.today():%Y%m%d}.log"
     )
@@ -271,6 +406,17 @@ def main(parameters: SchedulerConfig) -> None:
     with log_helpers.LogHelper("", details, log_file=log_file) as helper:
         database.init_sqlalchemy_logging(helper.logger)
 
+        if parameters.teams_webhook_url is not None:
+            teams_post = teams.TeamsPost(
+                parameters.teams_webhook_url,
+                teams.TOOL_NAME,
+                bodse.__version__,
+                teams.SOURCE_CODE_URL,  # type: ignore
+                allow_missing_module=True,
+            )
+        else:
+            teams_post = None
+
         # TODO Check date to see if tasks need running
         while True:
             try:
@@ -279,10 +425,19 @@ def main(parameters: SchedulerConfig) -> None:
                     parameters.database_parameters,
                     parameters.output_folder,
                     parameters.api_auth_config,
+                    teams_post=teams_post,
                 )
-            except Exception:  # pylint: disable=broad-exception-caught
-                LOG.critical("error during schedule tasks", exc_info=True)
-                # TODO(MB) Log errors to MS Teams
+
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                LOG.critical(
+                    "error during scheduled BODSE tasks, detailed"
+                    " log file can be found at '%s'",
+                    log_file.absolute(),
+                    exc_info=True,
+                )
+
+                if teams_post is not None:
+                    teams_post.post_error("error during scheduled tasks", exc)
 
             LOG.info("Completed task, waiting %.0f mins...", WAIT_TIME / 60)
             time.sleep(WAIT_TIME)
