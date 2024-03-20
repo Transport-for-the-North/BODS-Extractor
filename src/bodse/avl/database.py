@@ -13,6 +13,7 @@ import sys
 import textwrap
 import time
 from typing import Any, Optional, Protocol
+import warnings
 import pandas as pd
 
 # Third Party
@@ -392,8 +393,12 @@ class GTFSRTDatabase(_Database):
         )
         conn.execute(stmt)
 
-        for _ in feed.updates:
-            raise NotImplementedError("functionality for storing trip updates in the database")
+        if len(feed.updates) > 0:
+            warnings.warn(
+                f"AVL feed has {len(feed.updates):,} trip updates"
+                " which won't be stored in the database and are ignored",
+                UserWarning,
+            )
 
         LOG.info("Inserting %s positions into database", len(feed.positions))
         row_count = 0
@@ -409,8 +414,12 @@ class GTFSRTDatabase(_Database):
             )
             self._position_hashes.clear()
 
-        for _ in feed.alerts:
-            raise NotImplementedError("functionality for storing alerts in the database")
+        if len(feed.alerts) > 0:
+            warnings.warn(
+                f"AVL feed has {len(feed.alerts):,} alerts which"
+                " won't be stored in the database and are ignored",
+                UserWarning,
+            )
 
     def delete_duplicate_positions(self, conn: sqlalchemy.Connection) -> None:
         """Delete duplicate rows from positions table based on 'identifier_hash' column."""

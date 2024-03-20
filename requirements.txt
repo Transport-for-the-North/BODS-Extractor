@@ -11,4 +11,4 @@ pyproj>=3.6.0, <4.0.0
 # Packages not available on conda-forge, only available on PyPI
 gtfs-realtime-bindings>=1.0.0, <2.0.0
 # Required for posting to MS Teams
-pymsteams
+pymsteams>=0.2.2

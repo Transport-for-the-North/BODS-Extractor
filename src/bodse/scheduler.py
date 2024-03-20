@@ -12,7 +12,9 @@ The scheduler will perform the following tasks on a regular schedule:
 ##### IMPORTS #####
 
 # Built-Ins
+import calendar
 import datetime
+import enum
 import json
 import logging
 import pathlib
@@ -35,10 +37,22 @@ from bodse.avl import database as avl_db
 ##### CONSTANTS #####
 
 LOG = logging.getLogger(__name__)
-WAIT_TIME = 3600
+WAIT_TIME = 3600 * 12  # 0.5 days
 
 
 ##### CLASSES & FUNCTIONS #####
+
+
+class Day(enum.IntEnum):
+    """Days of the week."""
+
+    MONDAY = calendar.MONDAY
+    TUESDAY = calendar.TUESDAY
+    WEDNESDAY = calendar.WEDNESDAY
+    THURSDAY = calendar.THURSDAY
+    FRIDAY = calendar.FRIDAY
+    SATURDAY = calendar.SATURDAY
+    SUNDAY = calendar.SUNDAY
 
 
 @dataclasses.dataclass
@@ -62,7 +76,8 @@ class SchedulerConfig(config_base.BaseConfig):
     teams_webhook_url: Optional[pydantic.HttpUrl] = None
 
     run_months: int = pydantic.Field(2, ge=1, le=12)
-    run_day: int = pydantic.Field(5, ge=1, le=28)
+    run_month_day: int = pydantic.Field(5, ge=1, le=28)
+    run_weekday: Day = Day.MONDAY
 
 
 def _log_success(message: str, teams_post: Optional[teams.TeamsPost] = None) -> None:
@@ -395,6 +410,159 @@ def run_tasks(
     )
 
 
+class RunDate:
+    """Determine if scheduled run is required today and log run date to file.
+
+    Parameters
+    ----------
+    folder : pathlib.Path
+        Folder to save run date file to.
+    month_day : int
+        Earliest day of the month to run scheduled tasks on.
+    month_frequency : int
+        Frequency to run the scheduled tasks in months e.g.
+        1 would be run every month.
+    day_of_week : Day
+        Weekday to run scheduled tasks on.
+    """
+
+    _file_encoding = "utf-8"
+    _filename = "bodse_last_run"
+    _filename_hash = "868ea1ebd8286461461ada57d5f9487f"
+
+    def __init__(
+        self, folder: pathlib.Path, month_day: int, month_frequency: int, day_of_week: Day
+    ) -> None:
+        if not folder.is_dir():
+            raise NotADirectoryError(f"not a directory: '{folder}'")
+        folder = folder.resolve()
+
+        self._path = folder / self._filename
+        self._month_day = int(month_day)
+        self._month_frequency = int(month_frequency)
+        self._day_of_week = Day(day_of_week)
+
+        if self._month_day > 28 or self._month_day < 1:
+            raise ValueError(f"month day should be 1 - 28 (inclusive) not {month_day}")
+
+        if self._month_frequency < 1 or self._month_frequency > 12:
+            raise ValueError(
+                f"month frequency should be 1 - 12 (inclusive) not {month_frequency}"
+            )
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"folder={self._path.parent.name!r}, month_day={self._month_day},"
+            f" month_frequency={self._month_frequency},"
+            f" day_of_week={self._day_of_week.name})"
+        )
+
+    def check_file(self) -> None:
+        """Check that the previous run date file isn't an unexpected format.
+
+        Raises
+        ------
+        FileExistsError
+            If the previous run file exists but doesn't
+            start with the correct hash.
+        """
+        if not self._path.is_file():
+            return
+
+        with open(self._path, "rt", encoding=self._file_encoding) as file:
+            line = file.readline().strip()
+
+        if line != self._filename_hash:
+            raise FileExistsError(
+                f"BODSE date file already exists ({self._path.name})"
+                " but with unexpected hash, what is this file?"
+            )
+
+    def get_date(self) -> datetime.date | None:
+        """Get previous run date from file, if available."""
+        if not self._path.is_file():
+            return None
+
+        with open(self._path, "rt", encoding=self._file_encoding) as file:
+            _ = file.readline()  # hash line
+            text = file.readline().strip()
+
+        run_datetime = datetime.date.fromisoformat(text)
+
+        return run_datetime
+
+    def update(self) -> None:
+        """Update previous run file with today's date."""
+        with open(self._path, "wt", encoding=self._file_encoding) as file:
+            file.writelines(
+                [f"{self._filename_hash}\n", f"{datetime.date.today().isoformat()}\n"]
+            )
+
+    def needs_running(self, verbose: bool = True) -> bool:
+        """Check if scheduled tasks need running today."""
+        today = datetime.date.today()
+
+        if today.weekday() != self._day_of_week:
+            if verbose:
+                LOG.info(
+                    "No runs required as today is %s not %s",
+                    Day(today.weekday()).name.title(),
+                    self._day_of_week.name.title(),
+                )
+            return False
+
+        if today.day < self._month_day:
+            if verbose:
+                LOG.info(
+                    "No runs required, today's date (%s) is earlier"
+                    " in the month than scheduled date (%s)",
+                    today.day,
+                    self._month_day,
+                )
+            return False
+
+        previous_date = self.get_date()
+        if previous_date is None:
+            return True
+
+        year_diff = today.year - previous_date.year
+        month_diff = year_diff * 12 + today.month - previous_date.month
+
+        if month_diff < self._month_frequency:
+            if verbose:
+                LOG.info(
+                    "No runs required, run was done %s month(s)"
+                    " ago and will be done every %s month(s)",
+                    month_diff,
+                    self._month_frequency,
+                )
+            return False
+
+        return True
+
+    def next_run_date(self) -> datetime.date:
+        """Calculate the date for the next scheduled run."""
+        if self.needs_running(verbose=False):
+            return datetime.date.today()
+
+        previous_run = self.get_date()
+        if previous_run is None:
+            return datetime.date.today()
+
+        year, month = divmod(previous_run.month + self._month_frequency, 12)
+        if month == 0:
+            month = 12
+            year -= 1
+
+        return datetime.date(year=previous_run.year + year, month=month, day=self._month_day)
+
+    def time_until_run(self) -> datetime.timedelta:
+        """Calculate the time left until the next scheduled run."""
+        new_date = self.next_run_date()
+        return new_date - datetime.date.today()
+
+
 def main(parameters: SchedulerConfig) -> None:
     """Run BODSE scheduler, to regularly download and adjust timetables."""
     log_file = (
@@ -403,9 +571,7 @@ def main(parameters: SchedulerConfig) -> None:
     log_file.parent.mkdir(exist_ok=True)
     details = log_helpers.ToolDetails(__package__, bodse.__version__)
 
-    with log_helpers.LogHelper("", details, log_file=log_file) as helper:
-        database.init_sqlalchemy_logging(helper.logger)
-
+    with log_helpers.LogHelper(__package__, details, log_file=log_file):
         if parameters.teams_webhook_url is not None:
             teams_post = teams.TeamsPost(
                 parameters.teams_webhook_url,
@@ -417,16 +583,25 @@ def main(parameters: SchedulerConfig) -> None:
         else:
             teams_post = None
 
-        # TODO Check date to see if tasks need running
+        run_date = RunDate(
+            parameters.output_folder,
+            parameters.run_month_day,
+            parameters.run_months,
+            parameters.run_weekday,
+        )
+
         while True:
+            wait_time = WAIT_TIME
             try:
-                run_tasks(
-                    parameters.task_parameters,
-                    parameters.database_parameters,
-                    parameters.output_folder,
-                    parameters.api_auth_config,
-                    teams_post=teams_post,
-                )
+                if run_date.needs_running():
+                    run_tasks(
+                        parameters.task_parameters,
+                        parameters.database_parameters,
+                        parameters.output_folder,
+                        parameters.api_auth_config,
+                        teams_post=teams_post,
+                    )
+                    run_date.update()
 
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 LOG.critical(
@@ -439,5 +614,5 @@ def main(parameters: SchedulerConfig) -> None:
                 if teams_post is not None:
                     teams_post.post_error("error during scheduled tasks", exc)
 
-            LOG.info("Completed task, waiting %.0f mins...", WAIT_TIME / 60)
-            time.sleep(WAIT_TIME)
+            LOG.info("Completed task, waiting %.1f hours...", wait_time / 3600)
+            time.sleep(wait_time)

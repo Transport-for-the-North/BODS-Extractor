@@ -10,6 +10,7 @@ import pathlib
 import time
 from typing import Iterator
 from urllib import parse
+import warnings
 
 # Third Party
 import pydantic
@@ -26,8 +27,17 @@ from bodse.avl import database, gtfs, raw
 LOG = logging.getLogger(__name__)
 CONFIG_PATH = pathlib.Path("avl_downloader.yml")
 
+##### CLASSES & FUNCTIONS #####
 
-##### CLASSES #####
+# Ignore private attr warnings in the DownloadTime class
+warnings.filterwarnings(
+    "ignore",
+    "fields may not start with an underscore, ignoring",
+    RuntimeWarning,
+    module=__name__,
+)
+
+
 @dataclasses.dataclass
 class DownloadTime:
     """AVL download duration."""
@@ -88,7 +98,6 @@ class DownloaderConfig(config_base.BaseConfig):
     download_time: DownloadTime
 
 
-##### FUNCTIONS #####
 def store_raw(avl_database: database.RawAVLDatabase, auth: request.APIAuth):
     """Download Siri XML data from BODS and store in `avl_database`.
 
@@ -190,18 +199,28 @@ def download(
     LOG.info("Started downloading AVL data to %s", gtfs_db.path)
     LOG.debug("Accessing BODS using user account: %s", bods_auth.name)
 
-    for _ in _download_iterator(download_time):
+    for i in _download_iterator(download_time):
         # TODO Look into using concurrent.futures.ThreadPoolExecutor to perform
         # download and insert while the iterator is waiting
         try:
             feed = gtfs.download(bods_auth)
         except requests.HTTPError as exc:
-            LOG.error("HTTP error when downloading AVL feed: %s", exc)
+            LOG.error("HTTP error when downloading AVL feed %s: %s", i, exc)
             continue
 
-        with gtfs_db.connect() as conn:
-            gtfs_db.insert_feed(conn, feed)
-            conn.commit()
+        try:
+            with gtfs_db.connect() as conn:
+                gtfs_db.insert_feed(conn, feed)
+                conn.commit()
+
+        except Exception as exc:
+            LOG.error(
+                "Error inserting the AVL feed data (%s) into the database, %s: %s",
+                i,
+                exc.__class__.__name__,
+                exc,
+            )
+            continue
 
     LOG.info("Finished downloading AVL data")
 
