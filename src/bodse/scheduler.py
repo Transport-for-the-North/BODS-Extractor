@@ -21,7 +21,7 @@ import pathlib
 import re
 import time
 import traceback
-from typing import Optional
+from typing import Any, Optional
 
 # Third Party
 import pydantic
@@ -53,6 +53,29 @@ class Day(enum.IntEnum):
     FRIDAY = calendar.FRIDAY
     SATURDAY = calendar.SATURDAY
     SUNDAY = calendar.SUNDAY
+
+    @property
+    def name_and_number(self) -> str:
+        """Return name and number of day."""
+        return f"{self.name} ({self.value})"
+
+    @classmethod
+    def _missing_(cls, value: Any) -> "Day":
+        if not isinstance(value, int):
+            value = str(value)
+            upper = value.upper().strip()
+
+            if upper in [i.name for i in cls]:
+                return cls[upper]
+
+            for i in cls:
+                if i.name[:3] == upper:
+                    return i
+
+        raise ValueError(
+            f"{value!r} is not a valid {cls.__name__} should be one of "
+            + ", ".join(i.name_and_number for i in cls)
+        )
 
 
 @dataclasses.dataclass
