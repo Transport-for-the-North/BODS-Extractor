@@ -109,7 +109,7 @@ class Timetable(_TableBase):
     timetable_path: orm.Mapped[str] = orm.mapped_column(nullable=False)
     adjusted: orm.Mapped[bool] = orm.mapped_column(nullable=False)
     base_timetable_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("timetables.id", ondelete="NO ACTION"), nullable=True
+        sqlalchemy.ForeignKey("bus.timetables.id", ondelete="NO ACTION"), nullable=True
     )
     delay_calculation: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
 
