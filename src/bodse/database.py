@@ -102,7 +102,7 @@ class Timetable(_TableBase):
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     run_metadata_id: orm.Mapped[int] = orm.mapped_column(
-        sqlalchemy.ForeignKey("run_metadata.id", ondelete="CASCADE")
+        sqlalchemy.ForeignKey("bus.run_metadata.id", ondelete="CASCADE")
     )
     feed_update_time: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=True)
     upload_date: orm.Mapped[datetime.date] = orm.mapped_column(nullable=False)
