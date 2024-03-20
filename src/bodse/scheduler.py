@@ -591,7 +591,6 @@ def main(parameters: SchedulerConfig) -> None:
         )
 
         while True:
-            wait_time = WAIT_TIME
             try:
                 if run_date.needs_running():
                     run_tasks(
@@ -614,5 +613,12 @@ def main(parameters: SchedulerConfig) -> None:
                 if teams_post is not None:
                     teams_post.post_error("error during scheduled tasks", exc)
 
-            LOG.info("Completed task, waiting %.1f hours...", wait_time / 3600)
+            # Wait longer if the scheduled run isn't needed yet
+            wait_time = max(WAIT_TIME, int(run_date.time_until_run().total_seconds()))
+            if wait_time > (3600 * 24):
+                wait_str = f"{wait_time / (3600 * 24):.1f} days"
+            else:
+                wait_str = f"{wait_time / 3600:.1f} hours"
+
+            LOG.info("Completed task, waiting %s...", wait_str)
             time.sleep(wait_time)
