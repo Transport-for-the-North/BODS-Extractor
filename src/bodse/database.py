@@ -82,7 +82,7 @@ class RunMetadata(_TableBase):
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     zoning_systems_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("zoning_systems.id", ondelete="CASCADE"), nullable=True
+        sqlalchemy.ForeignKey("common.zoning_systems.id", ondelete="CASCADE"), nullable=True
     )
     model_name: orm.Mapped[ModelName] = orm.mapped_column(
         sqlalchemy.Enum(ModelName), nullable=False
