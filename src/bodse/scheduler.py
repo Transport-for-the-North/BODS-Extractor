@@ -102,6 +102,11 @@ class SchedulerConfig(config_base.BaseConfig):
     run_month_day: int = pydantic.Field(5, ge=1, le=28)
     run_weekday: Day = Day.MONDAY
 
+    @pydantic.validator("run_weekday", pre=True)
+    def convert_weekday(cls, value) -> "Day":  # pylint: disable=no-self-argument
+        """Attempt to convert `run_weekday` value to Day."""
+        return Day(value)
+
 
 def _log_success(message: str, teams_post: Optional[teams.TeamsPost] = None) -> None:
     """Log message and post to Teams channel, if available."""
