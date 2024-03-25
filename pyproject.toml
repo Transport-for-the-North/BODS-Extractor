@@ -1,3 +1,55 @@
+[build-system]
+requires = ["setuptools>=64.0.0", "versioningit"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bodse"
+dynamic = ["version"]
+description = "Package for extracting / processing data from BODS (Bus Open Data Service)"
+readme = "README.md"
+license = { "file" = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Transport for the North" }]
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "requests>=2.31.0",
+    "caf.toolkit>=0.2.1, <0.3.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2",
+    "tqdm>=4.66.0",
+    "pydantic>=1.10.0, <2.0.0",
+    "pyproj>=3.6.0",
+    "gtfs-realtime-bindings>=1.0.0",
+]
+
+[project.optional-dependencies]
+teams = ["pymsteams>=0.2.2"]
+lint = [
+    "black>=24.1.1",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "mypy_extensions>=1.0.0",
+    "pydocstyle[toml]>=6.1.1",
+    "pylint>=2.14.5",
+]
+
+[project.urls]
+"Bug Tracker" = "https://github.com/Transport-for-the-North/BODS-Extractor/issues"
+Homepage = "https://github.com/Transport-for-the-North/BODS-Extractor"
+Source = "https://github.com/Transport-for-the-North/BODS-Extractor"
+Documentation = "https://github.com/Transport-for-the-North/BODS-Extractor"
+
+# Packaging options
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"bodse" = ["py.typed"]
+
 # Linters
 [tool.black]
 line-length = 95
@@ -33,7 +85,7 @@ allow_redefinition = true
 convention = "numpy"
 match = '(?!_test)(?!test_)(?!__init__).*\.py'
 add-ignore = [
-    "D202",    # Temporary compatibility with black
+    "D202", # Temporary compatibility with black
 ]
 
 [tool.isort]
@@ -47,3 +99,19 @@ skip_glob = [".*"]
 import_heading_stdlib = "Built-Ins"
 import_heading_thirdparty = "Third Party"
 import_heading_firstparty = "Local Imports"
+
+# Versioning
+[tool.versioningit.vcs]
+method = "git"
+match = ["v*"]
+default-tag = "0.0.1"
+
+[tool.versioningit.onbuild]
+source-file = "src/caf/toolkit/_version.py"
+build-file = "caf/toolkit/_version.py"
+
+[tool.versioningit.format]
+distance = "{base_version}+{distance}.{vcs}{rev}"
+dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
+
+distance-dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
