@@ -113,7 +113,12 @@ def _log_success(message: str, teams_post: Optional[teams.TeamsPost] = None) -> 
     LOG.info(message)
 
     if teams_post is not None:
-        teams_post.post_success(message)
+        try:
+            teams_post.post_success(message)
+        except Exception as exc:
+            LOG.error(
+                "error posting sucess message to teams, %s: %s", exc.__class__.__name__, exc
+            )
 
 
 def get_scheduled_timetable(
@@ -639,7 +644,14 @@ def main(parameters: SchedulerConfig) -> None:
                 )
 
                 if teams_post is not None:
-                    teams_post.post_error("error during scheduled tasks", exc)
+                    try:
+                        teams_post.post_error("error during scheduled tasks", exc)
+                    except Exception as post_exc:
+                        LOG.error(
+                            "error posting error to Teams, %s: %s",
+                            post_exc.__class__.__name__,
+                            post_exc,
+                        )
 
             # Wait longer if the scheduled run isn't needed yet
             wait_time = max(WAIT_TIME, int(run_date.time_until_run().total_seconds()))

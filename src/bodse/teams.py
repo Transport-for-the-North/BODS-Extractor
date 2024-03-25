@@ -7,6 +7,7 @@
 import dataclasses
 import functools
 import logging
+import textwrap
 import traceback
 import warnings
 from typing import Optional
@@ -64,6 +65,7 @@ class TeamsPost:
 
     allow_missing_module: dataclasses.InitVar[bool] = False
 
+    _warning_message_length = 100
     _success_teal = "00dec6"
     _error_red = "ff1100"
 
@@ -150,6 +152,11 @@ class TeamsPost:
             Optional shorter summary message.
         """
         if pymsteams is None:
+            title = textwrap.shorten(title, width=self._warning_message_length)
+            message = textwrap.shorten(message, width=self._warning_message_length)
+            if summary is not None:
+                summary = textwrap.shorten(summary, width=self._warning_message_length)
+
             warnings.warn(
                 f"cannot post teams message:\ntitle: {title!r}"
                 f"\nsummary: {summary!r}\nmessage: {message!r}",

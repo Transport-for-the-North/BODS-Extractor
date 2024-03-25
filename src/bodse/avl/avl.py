@@ -204,8 +204,8 @@ def download(
         # download and insert while the iterator is waiting
         try:
             feed = gtfs.download(bods_auth)
-        except requests.HTTPError as exc:
-            LOG.error("HTTP error when downloading AVL feed %s: %s", i, exc)
+        except requests.RequestException as exc:
+            LOG.error("Error downloading AVL feed %s, %s: %s", i, exc.__class__.__name__, exc)
             continue
 
         try:
