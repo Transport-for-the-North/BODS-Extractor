@@ -70,13 +70,15 @@ class TeamsPost:
     _error_red = "ff1100"
 
     def __post_init__(self, allow_missing_module: bool) -> None:
-        if pymsteams is None and not allow_missing_module:
-            raise ModuleNotFoundError("pymsteams")
-
-        warnings.warn(
-            "'pymsteams' isn't installed, so messages cannot be posted to MS Teams channel",
-            RuntimeWarning,
-        )
+        if pymsteams is None:
+            if allow_missing_module:
+                warnings.warn(
+                    "'pymsteams' isn't installed, so messages cannot"
+                    " be posted to MS Teams channel",
+                    RuntimeWarning,
+                )
+            else:
+                raise ModuleNotFoundError("pymsteams")
 
     @pydantic.validator("webhook_url")
     def validate_webhook_host(  # pylint: disable=no-self-argument
