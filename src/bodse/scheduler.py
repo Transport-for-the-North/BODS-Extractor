@@ -645,7 +645,11 @@ def main(parameters: SchedulerConfig) -> None:
 
                 if teams_post is not None:
                     try:
-                        teams_post.post_error("error during scheduled tasks", exc)
+                        teams_post.post_error(
+                            "error during scheduled tasks, more details"
+                            f" available in the log file: {log_file.resolve()}",
+                            exc,
+                        )
                     except Exception as post_exc:
                         LOG.error(
                             "error posting error to Teams, %s: %s",
