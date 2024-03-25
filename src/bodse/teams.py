@@ -80,6 +80,13 @@ class TeamsPost:
             else:
                 raise ModuleNotFoundError("pymsteams")
 
+        else:
+            LOG.info("Setup teams posts pointing to %s", self.webhook_url.host)
+            self.post(
+                f"{self.tool_name} - Startup",
+                "Setup posts to be sent to this channel for any errors or outputs.",
+            )
+
     @pydantic.validator("webhook_url")
     def validate_webhook_host(  # pylint: disable=no-self-argument
         cls, value: pydantic.HttpUrl
@@ -188,7 +195,7 @@ class TeamsPost:
             Main body of the post, should use markdown formatting.
         """
         self.post(
-            title=f"{TOOL_NAME} - Output",
+            title=f"{self.tool_name} - Output",
             message=message,
             color=self._success_teal,
         )
@@ -209,7 +216,7 @@ class TeamsPost:
         text = f"{summary}\n\n```python{trace}```"
 
         self.post(
-            title=f"{TOOL_NAME} - Error",
+            title=f"{self.tool_name} - Error",
             message=text,
             color=self._error_red,
             summary=summary,
