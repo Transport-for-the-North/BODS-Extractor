@@ -21,6 +21,7 @@ import pathlib
 import re
 import time
 import traceback
+from collections import abc
 from typing import Any, Optional
 
 # Third Party
@@ -61,7 +62,17 @@ class Day(enum.IntEnum):
 
     @classmethod
     def _missing_(cls, value: Any) -> "Day":
-        if not isinstance(value, int):
+        try:
+            value = int(value)
+        except ValueError:
+            pass
+
+        if isinstance(value, int):
+            for i in cls:
+                if value == i.value:
+                    return i
+
+        else:
             value = str(value)
             upper = value.upper().strip()
 
@@ -100,9 +111,17 @@ class SchedulerConfig(config_base.BaseConfig):
 
     run_months: int = pydantic.Field(2, ge=1, le=12)
     run_month_day: int = pydantic.Field(5, ge=1, le=28)
-    run_weekday: Day = Day.MONDAY
+    run_weekday: set[Day] = pydantic.Field(default_factory=lambda: {Day.MONDAY})
 
     @pydantic.validator("run_weekday", pre=True)
+    def split_list(cls, value) -> list:  # pylint: disable=no-self-argument
+        """Split str into list at ','."""
+        if isinstance(value, str):
+            return [i.strip() for i in value.split(",")]
+
+        return value
+
+    @pydantic.validator("run_weekday", pre=True, each_item=True)
     def convert_weekday(cls, value) -> "Day":  # pylint: disable=no-self-argument
         """Attempt to convert `run_weekday` value to Day."""
         return Day(value)
@@ -455,7 +474,7 @@ class RunDate:
     month_frequency : int
         Frequency to run the scheduled tasks in months e.g.
         1 would be run every month.
-    day_of_week : Day
+    day_of_week : Day | [Day]
         Weekday to run scheduled tasks on.
     """
 
@@ -464,7 +483,11 @@ class RunDate:
     _filename_hash = "868ea1ebd8286461461ada57d5f9487f"
 
     def __init__(
-        self, folder: pathlib.Path, month_day: int, month_frequency: int, day_of_week: Day
+        self,
+        folder: pathlib.Path,
+        month_day: int,
+        month_frequency: int,
+        day_of_week: abc.Iterable[Day],
     ) -> None:
         if not folder.is_dir():
             raise NotADirectoryError(f"not a directory: '{folder}'")
@@ -473,7 +496,7 @@ class RunDate:
         self._path = folder / self._filename
         self._month_day = int(month_day)
         self._month_frequency = int(month_frequency)
-        self._day_of_week = Day(day_of_week)
+        self._day_of_week = set(Day(i) for i in day_of_week)
 
         if self._month_day > 28 or self._month_day < 1:
             raise ValueError(f"month day should be 1 - 28 (inclusive) not {month_day}")
@@ -488,7 +511,7 @@ class RunDate:
             f"{self.__class__.__name__}("
             f"folder={self._path.parent.name!r}, month_day={self._month_day},"
             f" month_frequency={self._month_frequency},"
-            f" day_of_week={self._day_of_week.name})"
+            f" day_of_week={', '.join(i.name for i in self._day_of_week)})"
         )
 
     def check_file(self) -> None:
@@ -536,12 +559,12 @@ class RunDate:
         """Check if scheduled tasks need running today."""
         today = datetime.date.today()
 
-        if today.weekday() != self._day_of_week:
+        if today.weekday() not in self._day_of_week:
             if verbose:
                 LOG.info(
                     "No runs required as today is %s not %s",
                     Day(today.weekday()).name.title(),
-                    self._day_of_week.name.title(),
+                    ", ".join(i.name.title() for i in self._day_of_week),
                 )
             return False
 
