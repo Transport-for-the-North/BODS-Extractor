@@ -101,6 +101,22 @@ class _Database(abc.ABC):
         """Connect to database and return connection."""
         return self._engine.connect()
 
+    def table_exists(self, name: str) -> bool:
+        """Check if given table exists in database, doesn't check if it contains data."""
+        stmt = sql.text(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=:name;"
+        )
+        with self.connect() as conn:
+            result = conn.execute(stmt, {"name": name})
+            count: int = result.fetchone()[0]
+
+        if count == 1:
+            return True
+        if count == 0:
+            return False
+
+        raise ValueError(f"count is {count}, which shouldn't be possible")
+
 
 class RawAVLDatabase(_Database):
     """Manages interactions with an SQlite database to store raw AVL data."""
@@ -592,7 +608,7 @@ class GTFSRTDatabase(_Database):
             number of rows as `stop_times` and doesn't overwrite it if that's
             the case.
         """
-        if not overwrite:
+        if not overwrite and self.table_exists(self._stop_times_table_name):
             result = conn.execute(
                 sql.text(f"SELECT count(*) FROM {self._stop_times_table_name}")
             )

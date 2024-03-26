@@ -233,6 +233,7 @@ def calculate_stop_times_delays(
         Lookup from average type (min, max, mean) to
         the delay column name.
     """
+    LOG.info("Calculating stop time delays")
     gtfs_db = database.GTFSRTDatabase(db_path)
 
     with gtfs_db.connect() as conn:
@@ -251,13 +252,14 @@ def calculate_stop_times_delays(
         summary = gtfs_db.get_stop_delays_summary(conn)
         delays, delay_columns = gtfs_db.get_average_stop_delays(conn)
 
-    out_file = output_folder / "stop_delays_summary.csv"
-    summary.to_csv(out_file, index=False)
-    LOG.info("Written: %s", out_file)
+    if output_folder is not None:
+        out_file = output_folder / "stop_delays_summary.csv"
+        summary.to_csv(out_file, index=False)
+        LOG.info("Written: %s", out_file)
 
-    out_file = output_folder / "stop_delays.csv"
-    delays.to_csv(out_file, index=False)
-    LOG.info("Written: %s", out_file)
+        out_file = output_folder / "stop_delays.csv"
+        delays.to_csv(out_file, index=False)
+        LOG.info("Written: %s", out_file)
 
     return delays, delay_columns
 
