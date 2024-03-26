@@ -318,6 +318,11 @@ def avl_download(
         date = max(database_paths)
         age = datetime.date.today() - date
         if age.days <= max_age_days:
+            LOG.info(
+                "Found AVL database <= %s days old (%s), so not downloading new AVL data",
+                max_age_days,
+                database_paths[date].name,
+            )
             return database_paths[date]
 
     db_path = folder / name_format.format(f"{datetime.date.today():%Y%m%d}")
