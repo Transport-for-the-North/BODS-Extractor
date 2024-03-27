@@ -7,6 +7,7 @@
 import abc
 import collections
 import logging
+import os
 import pathlib
 import re
 import sys
@@ -45,6 +46,21 @@ _SQLALCHEMY_TYPE_LOOKUP: dict[str, type] = {
     "occupancystatus": types.Enum(gtfs.OccupancyStatus),  # type: ignore
     "wheelchairaccessible": types.Enum(gtfs.WheelchairAccessible),  # type: ignore
 }
+
+MAX_TO_SQL_CHUNKSIZE = 10_000_000
+try:
+    MAX_TO_SQL_CHUNKSIZE = int(
+        os.getenv(
+            "BODSE_MAX_TO_SQL_CHUNKSIZE",
+            str(MAX_TO_SQL_CHUNKSIZE),
+        )
+    )
+except ValueError as exc:
+    warnings.warn(
+        "error with 'BODSE_MAX_TO_SQL_CHUNKSIZE' environment variable:"
+        f" {exc}\nusing default value: {MAX_TO_SQL_CHUNKSIZE:,}",
+        RuntimeWarning,
+    )
 
 
 ##### CLASSES #####
@@ -634,7 +650,15 @@ class GTFSRTDatabase(_Database):
             table.name,
         )
         start = time.perf_counter()
-        rowcount = stop_times.to_sql(table.name, conn, index=False, if_exists="append")
+
+        if MAX_TO_SQL_CHUNKSIZE is not None and len(stop_times) > MAX_TO_SQL_CHUNKSIZE:
+            chunksize = MAX_TO_SQL_CHUNKSIZE
+        else:
+            chunksize = None
+
+        rowcount = stop_times.to_sql(
+            table.name, conn, index=False, if_exists="append", chunksize=chunksize
+        )
         LOG.info(
             "Inserted %s rows in %s",
             f"{rowcount:,}",

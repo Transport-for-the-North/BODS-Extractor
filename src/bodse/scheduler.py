@@ -134,7 +134,7 @@ def _log_success(message: str, teams_post: Optional[teams.TeamsPost] = None) -> 
     if teams_post is not None:
         try:
             teams_post.post_success(message)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             LOG.error(
                 "error posting sucess message to teams, %s: %s", exc.__class__.__name__, exc
             )
@@ -624,6 +624,21 @@ class RunDate:
         return new_date - datetime.date.today()
 
 
+def _log_error(
+    message: str, exc: BaseException, teams_post: Optional[teams.TeamsPost] = None
+) -> None:
+    """Log error message and post to Teams channel, if available."""
+    LOG.critical(message, exc_info=True)
+
+    if teams_post is not None:
+        try:
+            teams_post.post_error(message, exc)
+        except Exception as post_exc:  # pylint: disable=broad-exception-caught
+            LOG.error(
+                "error posting error to Teams, %s: %s", post_exc.__class__.__name__, post_exc
+            )
+
+
 def main(parameters: SchedulerConfig) -> None:
     """Run BODSE scheduler, to regularly download and adjust timetables."""
     log_file = (
@@ -663,27 +678,22 @@ def main(parameters: SchedulerConfig) -> None:
                     )
                     run_date.update()
 
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                LOG.critical(
-                    "error during scheduled BODSE tasks, detailed"
-                    " log file can be found at '%s'",
-                    log_file.absolute(),
-                    exc_info=True,
+            except MemoryError as exc:
+                _log_error(
+                    "memory error during scheduled BODSE tasks caused BODSE to"
+                    f" shut-down, detailed log file can be found at '{log_file.absolute()}'",
+                    exc,
+                    teams_post,
                 )
+                raise
 
-                if teams_post is not None:
-                    try:
-                        teams_post.post_error(
-                            "error during scheduled tasks, more details"
-                            f" available in the log file: {log_file.resolve()}",
-                            exc,
-                        )
-                    except Exception as post_exc:
-                        LOG.error(
-                            "error posting error to Teams, %s: %s",
-                            post_exc.__class__.__name__,
-                            post_exc,
-                        )
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                _log_error(
+                    "error during scheduled BODSE tasks, detailed"
+                    f" log file can be found at '{log_file.absolute()}'",
+                    exc,
+                    teams_post,
+                )
 
             # Wait longer if the scheduled run isn't needed yet
             wait_time = max(WAIT_TIME, int(run_date.time_until_run().total_seconds()))
