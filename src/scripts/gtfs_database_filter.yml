@@ -1,0 +1,12 @@
+output_folder: C:\Users\ukmjb018\WSP O365\70100784 TfN Bus Timetable Data Integration -
+  Documents\General\20. Stage 2\WIP Analysis\AVL Data\BODSE Outputs\BODSE AVL
+  Outputs - 2024-01-17\Filtered Reading
+avl_database: C:\Users\ukmjb018\WSP O365\70100784 TfN Bus Timetable Data Integration -
+  Documents\General\20. Stage 2\WIP Analysis\AVL Data\BODSE Outputs\BODSE AVL
+  Outputs - 2024-01-17\gtfs-rt.sqlite
+bounds:
+  min_easting: 464926
+  max_easting: 467463
+  min_northing: 171196
+  max_northing: 172725
+

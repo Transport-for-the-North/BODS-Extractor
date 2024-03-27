@@ -137,3 +137,10 @@ dmypy.json
 # Pipenv files
 Pipfile
 Pipfile.lock
+
+# BODS Account Details
+bods_auth.yml
+
+# Output folders
+Outputs/
+Output/
