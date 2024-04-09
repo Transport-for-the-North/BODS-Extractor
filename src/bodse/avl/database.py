@@ -13,11 +13,11 @@ import re
 import sys
 import textwrap
 import time
-from typing import Any, Optional, Protocol
 import warnings
-import pandas as pd
+from typing import Any, Optional, Protocol
 
 # Third Party
+import pandas as pd
 import sqlalchemy
 from pydantic import fields
 from sqlalchemy import sql, types

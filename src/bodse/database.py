@@ -63,9 +63,10 @@ class _TableBase(orm.DeclarativeBase):
 class ZoningSystem(_TableBase):
     """Database table containing zoning system definitions."""
 
-    __tablename__ = "common.zoning_systems"
+    __tablename__ = "zone_type_list"
+    __table_args__ = {"schema": "foreign_keys"}
 
-    id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
+    ID: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     name: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
     description: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
     source: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
@@ -78,11 +79,12 @@ class ZoningSystem(_TableBase):
 class RunMetadata(_TableBase):
     """Database table containing run metadata."""
 
-    __tablename__ = "bus.run_metadata"
+    __tablename__ = "run_metadata"
+    __table_args__ = {"schema": "bus_data"}
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     zoning_systems_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("common.zoning_systems.id", ondelete="CASCADE"), nullable=True
+        sqlalchemy.ForeignKey("foreign_keys.zone_type_list.ID", ondelete="CASCADE"), nullable=True
     )
     model_name: orm.Mapped[ModelName] = orm.mapped_column(
         sqlalchemy.Enum(ModelName), nullable=False
@@ -98,18 +100,19 @@ class RunMetadata(_TableBase):
 class Timetable(_TableBase):
     """Database table storing GTFS timetables."""
 
-    __tablename__ = "bus.timetables"
+    __tablename__ = "timetables"
+    __table_args__ = {"schema": "bus_data"}
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     run_metadata_id: orm.Mapped[int] = orm.mapped_column(
-        sqlalchemy.ForeignKey("bus.run_metadata.id", ondelete="CASCADE")
+        sqlalchemy.ForeignKey("bus_data.run_metadata.id", ondelete="CASCADE")
     )
     feed_update_time: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=True)
     upload_date: orm.Mapped[datetime.date] = orm.mapped_column(nullable=False)
     timetable_path: orm.Mapped[str] = orm.mapped_column(nullable=False)
     adjusted: orm.Mapped[bool] = orm.mapped_column(nullable=False)
     base_timetable_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("bus.timetables.id", ondelete="NO ACTION"), nullable=True
+        sqlalchemy.ForeignKey("bus_data.timetables.id", ondelete="NO ACTION"), nullable=True
     )
     delay_calculation: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
 
