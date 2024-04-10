@@ -7,9 +7,10 @@
 import dataclasses
 import datetime
 import enum
+import json
 import logging
 import pathlib
-from typing import Optional
+from typing import Any, Optional
 
 # Third Party
 import sqlalchemy
@@ -84,14 +85,15 @@ class RunMetadata(_TableBase):
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
     zoning_systems_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("foreign_keys.zone_type_list.ID", ondelete="CASCADE"), nullable=True
+        sqlalchemy.ForeignKey("foreign_keys.zone_type_list.ID", ondelete="CASCADE"),
+        nullable=True,
     )
     model_name: orm.Mapped[ModelName] = orm.mapped_column(
         sqlalchemy.Enum(ModelName), nullable=False
     )
     start_datetime: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=False)
     end_datetime: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=False)
-    parameters: orm.Mapped[str] = orm.mapped_column(sqlalchemy.JSON, nullable=False)
+    parameters: orm.Mapped[dict[str, Any]] = orm.mapped_column(sqlalchemy.JSON, nullable=False)
     successful: orm.Mapped[bool] = orm.mapped_column(nullable=False)
     error: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
     output: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
@@ -136,7 +138,7 @@ class Database:
         self,
         model_name: ModelName,
         start_datetime: datetime.datetime,
-        parameters: str,
+        parameters: dict[str, Any],
         successful: bool,
         zoning_systems_id: Optional[int] = None,
         error: Optional[str] = None,
@@ -150,7 +152,7 @@ class Database:
             Name of the model which has ran.
         start_datetime : datetime.datetime
             Datetime for the start of the run.
-        parameters : str
+        parameters : dict[str, Any]
             JSON formatted parameters for the run.
         successful : bool
             If the model run was successful or not.
@@ -165,7 +167,17 @@ class Database:
         -------
         int
             ID from the run metadata table.
+
+        Raises
+        ------
+        TypeError
+            If `parameters` cannot be serialized to JSON.
         """
+        try:
+            json.dumps(parameters)
+        except TypeError as exc:
+            raise TypeError("cannot serialize run parameters to JSON") from exc
+
         stmt = (
             sqlalchemy.insert(RunMetadata)
             .values(

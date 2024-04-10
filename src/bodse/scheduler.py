@@ -15,7 +15,6 @@ The scheduler will perform the following tasks on a regular schedule:
 import calendar
 import datetime
 import enum
-import json
 import logging
 import pathlib
 import re
@@ -181,12 +180,10 @@ def get_scheduled_timetable(
         date in the filename.
     """
     start_time = datetime.datetime.now()
-    params = json.dumps(
-        {
-            "timetable_folder": str(timetable_folder),
-            "timetable_max_days": timetable_max_days,
-        }
-    )
+    params = {
+        "timetable_folder": str(timetable_folder),
+        "timetable_max_days": timetable_max_days,
+    }
 
     scheduled_timetable = bsip_database.find_recent_timetable()
 
@@ -393,7 +390,7 @@ def avl_adjustment(
     run_metadata_id = bsip_database.insert_run_metadata(
         model_name=database.ModelName.BODSE_ADJUSTED,
         start_datetime=start_time,
-        parameters=json.dumps(params),
+        parameters=params,
         successful=True,
         output="Downloaded timetables to:\n - "
         + "\n - ".join(f"{i}: {j.absolute()}" for i, j in adjusted_gtfs_files.items()),
