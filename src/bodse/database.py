@@ -208,6 +208,7 @@ class Database:
         timetable_path: str,
         adjusted: bool = False,
         base_timetable_id: Optional[int] = None,
+        delay_calculation: Optional[str] = None,
     ) -> Timetable:
         """Insert timetable data into database.
 
@@ -227,6 +228,8 @@ class Database:
         base_timetable_id : int, required if `adjusted` is True
             ID (in this database table) of the unadjusted timetable
             used as an input to produce this adjusted timetable.
+        delay_calculation : str, optional
+            Name of the delay calculation, if timetable is adjusted.
 
         Returns
         -------
@@ -242,6 +245,7 @@ class Database:
                 timetable_path=timetable_path,
                 adjusted=adjusted,
                 base_timetable_id=base_timetable_id,
+                delay_calculation=delay_calculation,
             )
             .returning(Timetable)
         )

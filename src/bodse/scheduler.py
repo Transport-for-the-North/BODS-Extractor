@@ -397,13 +397,14 @@ def avl_adjustment(
     )
 
     db_ids = []
-    for path in adjusted_gtfs_files.values():
+    for name, path in adjusted_gtfs_files.items():
         timetable_data = bsip_database.insert_timetable(
             run_metadata_id=run_metadata_id,
             feed_update_time=timetable.get_feed_version(path),
             timetable_path=str(path),
             adjusted=True,
             base_timetable_id=scheduled_timetable.id,
+            delay_calculation=name,
         )
         db_ids.append(timetable_data.id)
 
