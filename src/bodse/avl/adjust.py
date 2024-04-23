@@ -111,9 +111,14 @@ def _translate_stop_coordinates(stops: pd.DataFrame) -> pd.DataFrame:
         appended, containing the easting and northing values. Any
         translation errors will cause the new columns to contain NaNs.
     """
+    columns = ["stop_lat", "stop_lon"]
+    missing_cols = [c for c in columns if c not in stops.columns]
+    if missing_cols:
+        raise ValueError(f"`stops` DataFrame is missing the required columns: {missing_cols}")
+
     eastnorth = pd.DataFrame(
-        stops[["stop_lat", "stop_lon"]]
-        .apply(lambda x: gtfs.lat_lon_to_bng(x["stop_lat"], x["stop_lon"]), axis=1)
+        stops[columns]
+        .apply(lambda x: gtfs.lat_lon_to_bng(x[columns[0]], x[columns[0]]), axis=1)
         .tolist(),
         columns=["stop_east", "stop_north"],
     )
