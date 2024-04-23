@@ -118,7 +118,7 @@ def _translate_stop_coordinates(stops: pd.DataFrame) -> pd.DataFrame:
 
     eastnorth = pd.DataFrame(
         stops[columns]
-        .apply(lambda x: gtfs.lat_lon_to_bng(x[columns[0]], x[columns[0]]), axis=1)
+        .apply(lambda x: gtfs.lat_lon_to_bng(x[columns[0]], x[columns[1]]), axis=1)
         .tolist(),
         columns=["stop_east", "stop_north"],
     )
