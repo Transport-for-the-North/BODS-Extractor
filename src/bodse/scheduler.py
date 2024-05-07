@@ -26,7 +26,7 @@ from typing import Any, Optional
 # Third Party
 import pydantic
 from caf.toolkit import config_base, log_helpers
-from pydantic import dataclasses, types
+from pydantic import dataclasses
 
 # Local Imports
 import bodse
@@ -102,7 +102,7 @@ class TaskParameters:
 class SchedulerConfig(config_base.BaseConfig):
     """Parameters for running BODSE scheduler."""
 
-    output_folder: types.DirectoryPath
+    output_folder: pydantic.DirectoryPath
     task_parameters: TaskParameters
     database_parameters: database.DatabaseConfig
     api_auth_config: request.APIAuth
@@ -112,18 +112,20 @@ class SchedulerConfig(config_base.BaseConfig):
     run_month_day: int = pydantic.Field(5, ge=1, le=28)
     run_weekday: set[Day] = pydantic.Field(default_factory=lambda: {Day.MONDAY})
 
-    @pydantic.validator("run_weekday", pre=True)
-    def split_list(cls, value) -> list:  # pylint: disable=no-self-argument
+    @pydantic.field_validator("run_weekday", mode="before")
+    @classmethod
+    def split_list(cls, value) -> list:
         """Split str into list at ','."""
         if isinstance(value, str):
             return [i.strip() for i in value.split(",")]
 
         return value
 
-    @pydantic.validator("run_weekday", pre=True, each_item=True)
-    def convert_weekday(cls, value) -> "Day":  # pylint: disable=no-self-argument
+    @pydantic.field_validator("run_weekday", mode="before")
+    @classmethod
+    def convert_weekday(cls, values) -> set["Day"]:
         """Attempt to convert `run_weekday` value to Day."""
-        return Day(value)
+        return {Day(i) for i in values}
 
 
 def _log_success(message: str, teams_post: Optional[teams.TeamsPost] = None) -> None:

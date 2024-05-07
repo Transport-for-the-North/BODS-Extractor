@@ -63,16 +63,16 @@ class SummaryConfig(ctk.BaseConfig):
     avl_output_folder: pydantic.DirectoryPath
     metadata_ids: tuple[int, int]
 
-    @pydantic.validator("metadata_ids", pre=True)
+    @pydantic.field_validator("metadata_ids", mode="before")
+    @classmethod
     def _str_to_list(cls, value: Optional[str]) -> Optional[list]:
-        # pylint: disable=no-self-argument
         if value is None:
             return None
         return value.split(",")
 
-    @pydantic.validator("metadata_ids")
+    @pydantic.field_validator("metadata_ids")
+    @classmethod
     def _id_comparison(cls, value: tuple[int, int]) -> tuple[int, int]:
-        # pylint: disable=no-self-argument
         if len(value) != 2:
             raise ValueError(f"2 integers should be given not {len(value)}")
 

@@ -68,7 +68,7 @@ class _GTFSDataclass(abc.ABC):
         raise NotImplementedError("Abtract method not implemented in ABC")
 
     @classmethod
-    def get_fields(cls) -> list[fields.ModelField]:
+    def get_fields(cls) -> list[fields.FieldInfo]:
         """List of data fields."""
         # Added by dataclass decorator pylint: disable=no-member
         return list(cls.__dataclass_fields__.values())
@@ -94,7 +94,7 @@ class _GTFSEntity(abc.ABC):
         raise NotImplementedError("Abtract method not implemented in ABC")
 
     @classmethod
-    def get_fields(cls) -> list[fields.ModelField]:
+    def get_fields(cls) -> list[fields.FieldInfo]:
         """List of data fields."""
         # Added by dataclass decorator pylint: disable=no-member
         return list(cls.__dataclass_fields__.values())
@@ -136,17 +136,17 @@ class FeedHeader(_GTFSDataclass):
     gtfs_realtime_version: str
     incrementality: Incrementality = Incrementality.FULL_DATASET
 
-    @pydantic.validator("gtfs_realtime_version")
+    @pydantic.field_validator("gtfs_realtime_version")
+    @classmethod
     def _check_version(cls, value: str) -> str:
-        # pylint: disable=no-self-argument
         if value != "2.0":
             raise ValueError(f"expected GTFS-rt version 2.0 not {value}")
 
         return value
 
-    @pydantic.validator("incrementality")
+    @pydantic.field_validator("incrementality")
+    @classmethod
     def _check_incrementality(cls, value: Incrementality) -> Incrementality:
-        # pylint: disable=no-self-argument
         if value != Incrementality.FULL_DATASET:
             raise ValueError(
                 "according to the GTFS-rt v2.0 specification "
@@ -205,24 +205,24 @@ class TripDescriptor(_GTFSDataclass):
     schedule_relationship: Optional[ScheduleRelationship] = None
     "The relation between this trip and the static schedule."
 
-    @pydantic.validator("start_date", pre=True)
+    @pydantic.field_validator("start_date", mode="before")
+    @classmethod
     def _parse_date(cls, value: Optional[str]) -> Optional[dt.date]:
-        # pylint: disable=no-self-argument
         if value is None:
             return None
         return dt.date.fromisoformat(value)
 
-    @pydantic.validator("start_time", pre=True)
+    @pydantic.field_validator("start_time", mode="before")
+    @classmethod
     def _parse_time(cls, value: Optional[str]) -> Optional[dt.time]:
-        # pylint: disable=no-self-argument
         if value is None:
             return None
         return dt.time.fromisoformat(value)
 
-    @pydantic.validator("trip_id")
+    @pydantic.field_validator("trip_id")
+    @classmethod
     def _empty_strings(cls, value: Optional[str]) -> Optional[str]:
         """Check if string is empty and return None if so."""
-        # pylint: disable=no-self-argument
         if value is None:
             return value
 

@@ -15,8 +15,9 @@ from typing import Optional
 # Third Party
 import numpy as np
 import pandas as pd
+import pydantic
 from caf.toolkit import config_base, log_helpers
-from pydantic import dataclasses, types
+from pydantic import dataclasses
 
 # Local Imports
 import bodse
@@ -398,9 +399,9 @@ def calculate_observed_stop_times(
 class AdjustConfig(config_base.BaseConfig):
     """Parameters for the AVL adjustment process, requires AVL downloader database."""
 
-    avl_database: types.FilePath
-    gtfs_file: types.FilePath
-    output_folder: types.DirectoryPath
+    avl_database: pydantic.FilePath
+    gtfs_file: pydantic.FilePath
+    output_folder: pydantic.DirectoryPath
 
 
 def _write_gtfs_zip(

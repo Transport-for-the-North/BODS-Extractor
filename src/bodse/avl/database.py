@@ -907,7 +907,7 @@ class GTFSRTDatabase(_Database):
 
 class _DataStorage(Protocol):
     @classmethod
-    def get_fields(cls) -> list[fields.ModelField]:
+    def get_fields(cls) -> list[fields.FieldInfo]:
         """List of data fields."""
 
 

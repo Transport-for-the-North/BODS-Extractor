@@ -8,15 +8,15 @@ import datetime as dt
 import logging
 import pathlib
 import time
-from typing import Iterator
-from urllib import parse
 import warnings
+from typing import Iterator, Self
+from urllib import parse
 
 # Third Party
 import pydantic
 import requests
 from caf.toolkit import config_base, log_helpers
-from pydantic import dataclasses, types
+from pydantic import dataclasses
 
 # Local Imports
 import bodse
@@ -50,33 +50,29 @@ class DownloadTime:
     _MINIMUM_DOWNLOAD_MINUTES = 10
     _attribute_names: tuple[str, ...] = ("days", "hours", "minutes", "wait_minutes")
 
-    @pydantic.root_validator
-    def _check_time(cls, values: dict) -> dict:
-        # pylint: disable=no-self-argument
-        if values["minutes"] + values["hours"] + values["days"] <= 0:
+    @pydantic.model_validator(mode="after")
+    def _check_time(self) -> Self:
+        if self.minutes + self.hours + self.days <= 0:
             raise ValueError(
                 "at least one of minutes, hours or days must be a positive integer"
             )
 
-        if (
-            values["hours"] + values["days"] <= 0
-            and values["minutes"] < cls._MINIMUM_DOWNLOAD_MINUTES
-        ):
+        if self.hours + self.days <= 0 and self.minutes < self._MINIMUM_DOWNLOAD_MINUTES:
             raise ValueError(
-                f"total time should be greater than {cls._MINIMUM_DOWNLOAD_MINUTES} "
-                f"minutes, not {values['minutes']}"
+                f"total time should be greater than {self._MINIMUM_DOWNLOAD_MINUTES} "
+                f"minutes, not {self.minutes}"
             )
 
         # Convert to minimum values for each attribute i.e. 60 mins should be 1 hour
-        if values["minutes"] >= 60:
-            extra_hours, values["minutes"] = divmod(values["minutes"], 60)
-            values["hours"] += extra_hours
+        if self.minutes >= 60:
+            extra_hours, self.minutes = divmod(self.minutes, 60)
+            self.hours += extra_hours
 
-        if values["hours"] >= 24:
-            extra_days, values["hours"] = divmod(values["hours"], 24)
-            values["days"] += extra_days
+        if self.hours >= 24:
+            extra_days, self.hours = divmod(self.hours, 24)
+            self.days += extra_days
 
-        return values
+        return self
 
     def __str__(self) -> str:
         params = "".join(
@@ -92,9 +88,9 @@ class DownloadTime:
 class DownloaderConfig(config_base.BaseConfig):
     """Config for downloading AVL data."""
 
-    output_folder: types.DirectoryPath
+    output_folder: pydantic.DirectoryPath
     # TODO(MB) Allow this to be file path or API auth class
-    api_auth_config: types.FilePath
+    api_auth_config: pydantic.FilePath
     download_time: DownloadTime
 
 

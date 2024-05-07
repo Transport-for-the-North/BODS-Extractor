@@ -87,10 +87,9 @@ class TeamsPost:
                 "Setup posts to be sent to this channel for any errors or outputs.",
             )
 
-    @pydantic.validator("webhook_url")
-    def validate_webhook_host(  # pylint: disable=no-self-argument
-        cls, value: pydantic.HttpUrl
-    ) -> pydantic.HttpUrl:
+    @pydantic.field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_host(cls, value: pydantic.HttpUrl) -> pydantic.HttpUrl:
         """Validate URL points to office webhook."""
         end = "webhook.office.com"
 

@@ -76,7 +76,7 @@ class AVLMetadata:
         return AVLMetadata(producer_ref=producer_ref, **data)
 
     @classmethod
-    def get_fields(cls) -> list[fields.ModelField]:
+    def get_fields(cls) -> list[fields.FieldInfo]:
         """List of data fields."""
         # Added by dataclass decorator pylint: disable=no-member
         return list(cls.__dataclass_fields__.values())
@@ -202,7 +202,7 @@ class VehicleActivity:
         return VehicleActivity(**data)
 
     @classmethod
-    def get_fields(cls) -> list[fields.ModelField]:
+    def get_fields(cls) -> list[fields.FieldInfo]:
         """List of data fields."""
         # Added by dataclass decorator pylint: disable=no-member
         return list(cls.__dataclass_fields__.values())
