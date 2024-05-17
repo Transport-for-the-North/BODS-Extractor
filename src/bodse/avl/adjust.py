@@ -277,7 +277,7 @@ def _seconds_to_time(value: pd.Series) -> pd.Series:
     hours, secs = divmod(value, 3600)
     mins = secs / 60
 
-    hour_str = hours.astype(str).str.zfill(2)
+    hour_str = hours.astype(int).astype(str).str.zfill(2)
     min_str = mins.round(0).astype(int).astype(str).str.zfill(2)
 
     return hour_str + ":" + min_str
