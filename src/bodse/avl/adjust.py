@@ -274,13 +274,14 @@ def _seconds_to_time(value: pd.Series) -> pd.Series:
     if not isinstance(value, pd.Series):
         raise TypeError(f"value should be a Series not {type(value)}")
 
-    hours, secs = divmod(value, 3600)
-    mins = secs / 60
+    mins, secs = divmod(value, 60)
+    hours, mins = divmod(mins, 60)
 
     hour_str = hours.astype(int).astype(str).str.zfill(2)
-    min_str = mins.round(0).astype(int).astype(str).str.zfill(2)
+    min_str = mins.astype(int).astype(str).str.zfill(2)
+    secs_str = secs.round(0).astype(int).astype(str).str.zfill(2)
 
-    return hour_str + ":" + min_str
+    return hour_str + ":" + min_str + ":" + secs_str
 
 
 def _calculate_delayed_times(
