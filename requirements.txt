@@ -1,7 +1,11 @@
-python>=3.11.0, <4.0.0
+# Python >= 3.11
 requests>=2.31.0, <3.0.0
-caf.toolkit>=0.2.1, <0.3.0
+caf.toolkit>=0.5
 sqlalchemy>=2.0.0, <3.0.0
+psycopg2
 tqdm>=4.66.0, <5.0.0
-gtfs-realtime-bindings>=1.0.0, <2.0.0
-pydantic>=1.10.0, <2.0.0
+pydantic>=2.5
+# Required for converting AVL from lat / lon to easting / northing
+pyproj>=3.6.0, <4.0.0
+
+# PyPI only requirements contained in requirements-pip.txt

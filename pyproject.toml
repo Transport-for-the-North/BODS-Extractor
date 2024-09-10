@@ -1,0 +1,117 @@
+[build-system]
+requires = ["setuptools>=64.0.0", "versioningit"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bodse"
+dynamic = ["version"]
+description = "Package for extracting / processing data from BODS (Bus Open Data Service)"
+readme = "README.md"
+license = { "file" = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Transport for the North" }]
+classifiers = [
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "requests>=2.31.0",
+    "caf.toolkit>=0.5",
+    "sqlalchemy>=2.0.0",
+    "psycopg2",
+    "tqdm>=4.66.0",
+    "pydantic>=2.5",
+    "pyproj>=3.6.0",
+    "gtfs-realtime-bindings>=1.0.0",
+]
+
+[project.optional-dependencies]
+teams = ["pymsteams>=0.2.2"]
+lint = [
+    "black>=24.1.1",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "mypy_extensions>=1.0.0",
+    "pydocstyle[toml]>=6.1.1",
+    "pylint>=2.14.5",
+]
+
+[project.urls]
+"Bug Tracker" = "https://github.com/Transport-for-the-North/BODS-Extractor/issues"
+Homepage = "https://github.com/Transport-for-the-North/BODS-Extractor"
+Source = "https://github.com/Transport-for-the-North/BODS-Extractor"
+Documentation = "https://github.com/Transport-for-the-North/BODS-Extractor"
+
+# Packaging options
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"bodse" = ["py.typed"]
+
+# Linters
+[tool.black]
+line-length = 95
+target-version = ['py39']
+
+[tool.pylint.messages_control]
+disable = [
+    "line-too-long",    # Compatibility with black
+    "too-many-lines",
+    "use-dict-literal",
+    "use-list-literal",
+]
+
+# Pylint settings
+[tool.pylint.basic]
+good-names = ["df", "fn", "ca", "tp", "to", "x", "x1", "x2", "i", "f", "q"]
+extension-pkg-allow-list = ["pydantic"]
+
+[tool.pylint.main]
+ignore = ["__init__.py", "_version.py", "versioneer.py"]
+
+[tool.pylint.design]
+max-args = 10
+max-attributes = 15
+max-statements = 100
+
+[tool.mypy]
+packages = ["caf.toolkit"]
+ignore_missing_imports = true
+allow_redefinition = true
+
+[tool.pydocstyle]
+convention = "numpy"
+match = '(?!_test)(?!test_)(?!__init__).*\.py'
+add-ignore = [
+    "D202", # Temporary compatibility with black
+]
+
+[tool.isort]
+profile = "black"
+src_paths = ["src", "tests"]
+
+skip = ["__init__.py", "_version.py"]
+skip_glob = [".*"]
+
+# Section commenting
+import_heading_stdlib = "Built-Ins"
+import_heading_thirdparty = "Third Party"
+import_heading_firstparty = "Local Imports"
+
+# Versioning
+[tool.versioningit.vcs]
+method = "git"
+match = ["v*"]
+default-tag = "0.0.1"
+
+[tool.versioningit.onbuild]
+source-file = "src/caf/toolkit/_version.py"
+build-file = "caf/toolkit/_version.py"
+
+[tool.versioningit.format]
+distance = "{base_version}+{distance}.{vcs}{rev}"
+dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
+
+distance-dirty = "{base_version}+{distance}.{vcs}{rev}.dirty"
