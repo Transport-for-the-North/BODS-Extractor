@@ -97,6 +97,9 @@ class RunMetadata(_TableBase):
     successful: orm.Mapped[bool] = orm.mapped_column(nullable=False)
     error: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
     output: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    time_period: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    mode: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    modelled_date: orm.Mapped[Optional[datetime.date]] = orm.mapped_column(nullable=True)
 
 
 class Timetable(_TableBase):
@@ -143,6 +146,9 @@ class Database:
         zoning_systems_id: Optional[int] = None,
         error: Optional[str] = None,
         output: Optional[str] = None,
+        time_period: Optional[str] = None,
+        mode: Optional[str] = None,
+        modelled_date: Optional[datetime.date] = None,
     ) -> int:
         """Insert run metadata into the database table.
 
@@ -162,6 +168,12 @@ class Database:
             Error message, if an error occured.
         output : str, optional
             Output message.
+        time_period : str, optional
+            Time period for the model run, if relevant.
+        mode : str, optional
+            Mode for the model run, if relevant.
+        modelled_date : datetime.date, optional
+            Date for the model run, e.g. date being modelled.
 
         Returns
         -------
@@ -189,6 +201,9 @@ class Database:
                 successful=successful,
                 error=error,
                 output=output,
+                time_period=time_period,
+                mode=mode,
+                modelled_date=modelled_date,
             )
             .returning(RunMetadata.id)
         )
