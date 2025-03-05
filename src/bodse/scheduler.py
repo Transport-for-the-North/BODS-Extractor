@@ -232,9 +232,7 @@ def get_scheduled_timetable(
         output=f"Downloaded timetable to: {path.absolute()}",
     )
     timetable_data = bsip_database.insert_timetable(
-        run_metadata_id=run_metadata_id,
-        feed_update_time=timetable.get_feed_version(path),
-        timetable_path=str(path),
+        feed_update_time=timetable.get_feed_version(path), timetable_path=str(path)
     )
 
     _log_success(
@@ -401,7 +399,6 @@ def avl_adjustment(
     db_ids = []
     for name, path in adjusted_gtfs_files.items():
         timetable_data = bsip_database.insert_timetable(
-            run_metadata_id=run_metadata_id,
             feed_update_time=timetable.get_feed_version(path),
             timetable_path=str(path),
             adjusted=True,

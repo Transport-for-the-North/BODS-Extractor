@@ -109,17 +109,17 @@ class Timetable(_TableBase):
     __table_args__ = {"schema": "bus_data"}
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
-    run_metadata_id: orm.Mapped[int] = orm.mapped_column(
-        sqlalchemy.ForeignKey("bus_data.run_metadata.id", ondelete="CASCADE")
-    )
     feed_update_time: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=True)
-    upload_date: orm.Mapped[datetime.date] = orm.mapped_column(nullable=False)
     timetable_path: orm.Mapped[str] = orm.mapped_column(nullable=False)
     adjusted: orm.Mapped[bool] = orm.mapped_column(nullable=False)
     base_timetable_id: orm.Mapped[Optional[int]] = orm.mapped_column(
         sqlalchemy.ForeignKey("bus_data.timetables.id", ondelete="NO ACTION"), nullable=True
     )
     delay_calculation: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    created_date: orm.Mapped[datetime.datetime] = orm.mapped_column()
+    modified: orm.Mapped[datetime.datetime] = orm.mapped_column()
+    created_by: orm.Mapped[str] = orm.mapped_column()
+    modified_by: orm.Mapped[str] = orm.mapped_column()
 
     @property
     def actual_timetable_path(self) -> pathlib.Path:
@@ -218,7 +218,6 @@ class Database:
 
     def insert_timetable(
         self,
-        run_metadata_id: int,
         feed_update_time: Optional[datetime.datetime],
         timetable_path: str,
         adjusted: bool = False,
@@ -229,9 +228,6 @@ class Database:
 
         Parameters
         ----------
-        run_metadata_id : int
-            ID for the row in the run metadata table
-            corresponding to this timetable data.
         feed_update_time : datetime.datetime | None
             Last time the GTFS feed was updated on BODS.
         timetable_path : str
@@ -254,9 +250,7 @@ class Database:
         stmt = (
             sqlalchemy.insert(Timetable)
             .values(
-                run_metadata_id=run_metadata_id,
                 feed_update_time=feed_update_time,
-                upload_date=datetime.date.today(),
                 timetable_path=timetable_path,
                 adjusted=adjusted,
                 base_timetable_id=base_timetable_id,
@@ -291,7 +285,7 @@ class Database:
         stmt = (
             sqlalchemy.select(Timetable)
             .where(Timetable.adjusted == adjusted)
-            .order_by(Timetable.upload_date.desc())
+            .order_by(Timetable.created_date.desc())
             .limit(1)
         )
 
