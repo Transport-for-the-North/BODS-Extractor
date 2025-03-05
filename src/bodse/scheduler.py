@@ -181,12 +181,6 @@ def get_scheduled_timetable(
         will be downloaded to, downloaded GTFS files contain today's
         date in the filename.
     """
-    start_time = datetime.datetime.now()
-    params = {
-        "timetable_folder": str(timetable_folder),
-        "timetable_max_days": timetable_max_days,
-    }
-
     scheduled_timetable = bsip_database.find_recent_timetable()
 
     if scheduled_timetable is not None:
@@ -212,32 +206,15 @@ def get_scheduled_timetable(
             f"GTFS timetable already exists for '{path}' but isn't in the database"
         )
 
-    try:
-        path = timetable.download_to_file(path)
-    except Exception:
-        bsip_database.insert_run_metadata(
-            model_name=database.ModelName.BODSE_SCHEDULED,
-            start_datetime=start_time,
-            parameters=params,
-            successful=False,
-            error=traceback.format_exc(),
-        )
-        raise
+    path = timetable.download_to_file(path)
 
-    run_metadata_id = bsip_database.insert_run_metadata(
-        model_name=database.ModelName.BODSE_SCHEDULED,
-        start_datetime=start_time,
-        parameters=params,
-        successful=True,
-        output=f"Downloaded timetable to: {path.absolute()}",
-    )
     timetable_data = bsip_database.insert_timetable(
         feed_update_time=timetable.get_feed_version(path), timetable_path=str(path)
     )
 
     _log_success(
         f"Downloaded timetable from BODS to: {path.absolute()}\nSaved to database"
-        f" with run_metadata_id {run_metadata_id:,} and timetable id {timetable_data.id}",
+        f" with timetable id {timetable_data.id}",
         teams_post,
     )
 
@@ -387,15 +364,6 @@ def avl_adjustment(
     )
 
     LOG.info("Inserting adjusted GTFS files into database")
-    run_metadata_id = bsip_database.insert_run_metadata(
-        model_name=database.ModelName.BODSE_ADJUSTED,
-        start_datetime=start_time,
-        parameters=params,
-        successful=True,
-        output="Downloaded timetables to:\n - "
-        + "\n - ".join(f"{i}: {j.absolute()}" for i, j in adjusted_gtfs_files.items()),
-    )
-
     db_ids = []
     for name, path in adjusted_gtfs_files.items():
         timetable_data = bsip_database.insert_timetable(
@@ -408,8 +376,7 @@ def avl_adjustment(
         db_ids.append(timetable_data.id)
 
     _log_success(
-        "Finished AVL timetable adjustment, metadata saved to database with id"
-        f" {run_metadata_id} and adjusted timetables saved to database with ids:"
+        "Finished AVL timetable adjustment, saved to database with ids:"
         + ", ".join(str(i) for i in db_ids),
         teams_post,
     )
