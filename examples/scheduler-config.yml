@@ -1,0 +1,42 @@
+# Example of the config file for BODSE scheduler process
+output_folder: Path to a folder to save the outputs, folder must exist
+
+task_parameters:
+  # Folder for storing the GTFS zip files, stored on the BSIP drive
+  gtfs_folder: B:\BODS GTFS Timetables
+
+  # Amount of time to download AVL data for and wait time between downloads
+  avl_download_time:
+    days: 7
+    wait_minutes: 1
+
+  # Age of timetable GTFS file before a new one will be downloaded
+  max_timetable_age_days: 7
+  # Age of AVL data before a new set is downloaded
+  max_avl_age_days: 7
+  # Age of AVL databases to be cleaned up (deleted)
+  avl_database_delete_age_days: 30
+
+# Parameters for the Postgresql database
+database_parameters:
+  username: User name for database account
+  password: Password for the database account
+  host: IP address / URL for the database
+  database: Name of the database to upload to e.g. prod or test
+  port: 5432
+
+# BODS API account details
+api_auth_config:
+  name: User name
+  password: Password
+
+# Optional URL for MS Teams channel webhook, used for posting success and error messages
+teams_webhook_url: Optional webhook URL for posting messages to a MS Teams channel
+
+# Setting for how regularly, and when, to run the process
+# Run every X months
+run_months: 1
+# Earliest day of month to run on
+run_month_day: 1
+# Days of the week when the process can be ran
+run_weekday: Monday, Tuesday, Wednesday, Thursday, Friday
