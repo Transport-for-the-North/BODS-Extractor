@@ -7,10 +7,9 @@
 import dataclasses
 import datetime
 import enum
-import json
 import logging
 import pathlib
-from typing import Any, Optional
+from typing import Optional
 
 # Third Party
 import sqlalchemy
@@ -47,16 +46,6 @@ class DatabaseConfig:
         )
 
 
-class ModelName(enum.Enum):
-    """Name of the possible model results stored in database."""
-
-    BODSE_SCHEDULED = "bodse_scheduled"
-    BODSE_AVL = "bodse_avl"
-    BODSE_ADJUSTED = "bodse_adjusted"
-    OTP4GB = "otp4gb"
-    BUS_ANALYTICS = "bus_analytics"
-
-
 class _TableBase(orm.DeclarativeBase):
     """Base table for BODSE database."""
 
@@ -84,19 +73,20 @@ class RunMetadata(_TableBase):
     __table_args__ = {"schema": "bus_data"}
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
-    zoning_systems_id: orm.Mapped[Optional[int]] = orm.mapped_column(
-        sqlalchemy.ForeignKey("foreign_keys.zone_type_list.ID", ondelete="CASCADE"),
+    zone_type_id: orm.Mapped[Optional[int]] = orm.mapped_column(
+        sqlalchemy.ForeignKey("foreign_keys.zone_type_list.id", ondelete="CASCADE"),
         nullable=True,
     )
-    model_name: orm.Mapped[ModelName] = orm.mapped_column(
-        sqlalchemy.Enum(ModelName), nullable=False
+    time_period: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    mode: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    modelled_date: orm.Mapped[Optional[datetime.date]] = orm.mapped_column(nullable=True)
+    timetable_id: orm.Mapped[Optional[int]] = orm.mapped_column(
+        sqlalchemy.ForeignKey("bus_data.timetables.id"), nullable=True
     )
-    start_datetime: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=False)
-    end_datetime: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=False)
-    parameters: orm.Mapped[dict[str, Any]] = orm.mapped_column(sqlalchemy.JSON, nullable=False)
-    successful: orm.Mapped[bool] = orm.mapped_column(nullable=False)
-    error: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
-    output: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    created_date: orm.Mapped[datetime.datetime] = orm.mapped_column()
+    modified: orm.Mapped[datetime.datetime] = orm.mapped_column()
+    created_by: orm.Mapped[str] = orm.mapped_column()
+    modified_by: orm.Mapped[str] = orm.mapped_column()
 
 
 class Timetable(_TableBase):
@@ -106,17 +96,17 @@ class Timetable(_TableBase):
     __table_args__ = {"schema": "bus_data"}
 
     id: orm.Mapped[int] = orm.mapped_column(primary_key=True, autoincrement=True)
-    run_metadata_id: orm.Mapped[int] = orm.mapped_column(
-        sqlalchemy.ForeignKey("bus_data.run_metadata.id", ondelete="CASCADE")
-    )
     feed_update_time: orm.Mapped[datetime.datetime] = orm.mapped_column(nullable=True)
-    upload_date: orm.Mapped[datetime.date] = orm.mapped_column(nullable=False)
     timetable_path: orm.Mapped[str] = orm.mapped_column(nullable=False)
     adjusted: orm.Mapped[bool] = orm.mapped_column(nullable=False)
     base_timetable_id: orm.Mapped[Optional[int]] = orm.mapped_column(
         sqlalchemy.ForeignKey("bus_data.timetables.id", ondelete="NO ACTION"), nullable=True
     )
     delay_calculation: orm.Mapped[Optional[str]] = orm.mapped_column(nullable=True)
+    created_date: orm.Mapped[datetime.datetime] = orm.mapped_column()
+    modified: orm.Mapped[datetime.datetime] = orm.mapped_column()
+    created_by: orm.Mapped[str] = orm.mapped_column()
+    modified_by: orm.Mapped[str] = orm.mapped_column()
 
     @property
     def actual_timetable_path(self) -> pathlib.Path:
@@ -136,59 +126,40 @@ class Database:
 
     def insert_run_metadata(
         self,
-        model_name: ModelName,
-        start_datetime: datetime.datetime,
-        parameters: dict[str, Any],
-        successful: bool,
         zoning_systems_id: Optional[int] = None,
-        error: Optional[str] = None,
-        output: Optional[str] = None,
+        time_period: Optional[str] = None,
+        mode: Optional[str] = None,
+        modelled_date: Optional[datetime.date] = None,
+        timetable_id: Optional[int] = None,
     ) -> int:
         """Insert run metadata into the database table.
 
         Parameters
         ----------
-        model_name : ModelName
-            Name of the model which has ran.
-        start_datetime : datetime.datetime
-            Datetime for the start of the run.
-        parameters : dict[str, Any]
-            JSON formatted parameters for the run.
-        successful : bool
-            If the model run was successful or not.
         zoning_systems_id : int, optional
             ID for the zone system, if relevant.
-        error : str, optional
-            Error message, if an error occured.
-        output : str, optional
-            Output message.
+        time_period : str, optional
+            Time period for the model run, if relevant.
+        mode : str, optional
+            Mode for the model run, if relevant.
+        modelled_date : datetime.date, optional
+            Date for the model run, e.g. date being modelled.
+        timetable_id : int, optional
+            Database ID for the timetable used.
 
         Returns
         -------
         int
             ID from the run metadata table.
-
-        Raises
-        ------
-        TypeError
-            If `parameters` cannot be serialized to JSON.
         """
-        try:
-            json.dumps(parameters)
-        except TypeError as exc:
-            raise TypeError("cannot serialize run parameters to JSON") from exc
-
         stmt = (
             sqlalchemy.insert(RunMetadata)
             .values(
                 zoning_systems_id=zoning_systems_id,
-                model_name=model_name,
-                start_datetime=start_datetime,
-                end_datetime=datetime.datetime.now(),
-                parameters=parameters,
-                successful=successful,
-                error=error,
-                output=output,
+                time_period=time_period,
+                mode=mode,
+                modelled_date=modelled_date,
+                timetable_id=timetable_id,
             )
             .returning(RunMetadata.id)
         )
@@ -203,7 +174,6 @@ class Database:
 
     def insert_timetable(
         self,
-        run_metadata_id: int,
         feed_update_time: Optional[datetime.datetime],
         timetable_path: str,
         adjusted: bool = False,
@@ -214,9 +184,6 @@ class Database:
 
         Parameters
         ----------
-        run_metadata_id : int
-            ID for the row in the run metadata table
-            corresponding to this timetable data.
         feed_update_time : datetime.datetime | None
             Last time the GTFS feed was updated on BODS.
         timetable_path : str
@@ -239,9 +206,7 @@ class Database:
         stmt = (
             sqlalchemy.insert(Timetable)
             .values(
-                run_metadata_id=run_metadata_id,
                 feed_update_time=feed_update_time,
-                upload_date=datetime.date.today(),
                 timetable_path=timetable_path,
                 adjusted=adjusted,
                 base_timetable_id=base_timetable_id,
@@ -276,7 +241,7 @@ class Database:
         stmt = (
             sqlalchemy.select(Timetable)
             .where(Timetable.adjusted == adjusted)
-            .order_by(Timetable.upload_date.desc())
+            .order_by(Timetable.created_date.desc())
             .limit(1)
         )
 
